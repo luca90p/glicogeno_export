@@ -787,7 +787,6 @@ with tab3:
             st.write(f"**Totale Gara:** preparare borracce con **{int(total_needs)} g** totali.")
     
     else:
-        
         # --- CALCOLO REVERSE STRATEGY ---
         st.subheader("🎯 Calcolatore Strategia Minima")
         st.markdown("Il sistema calcolerà l'apporto di carboidrati minimo necessario per terminare la gara senza crisi.")
@@ -796,15 +795,15 @@ with tab3:
         curve_to_use = curve_data if use_lab_active else None
 
         if st.button("Calcola Fabbisogno Minimo"):
-             with st.spinner(f"Ottimizzazione con modello {'Mader' if use_mader_sim else 'Standard'}..."):
+             # CORREZIONE: Rimosso riferimento a 'use_mader_sim'
+             with st.spinner("Ottimizzazione modello in corso..."):
+                 # CORREZIONE: Rimossi argomenti 'use_mader' e 'running_method' che non esistono più in logic.py
                  opt_intake = logic.calculate_minimum_strategy(
                      tank, duration, subj, params, 
-                     curve_to_use, # <--- Passiamo la curva corretta (o None)
+                     curve_to_use, 
                      mix_sel, intake_mode_enum, intake_cutoff,
                      variability_index=vi_input, 
-                     intensity_series=intensity_series,
-                     use_mader=use_mader_sim,
-                     running_method=sim_method # Manteniamo coerenza col VI
+                     intensity_series=intensity_series
                  )
                  
              if opt_intake is not None:
@@ -813,37 +812,35 @@ with tab3:
                       st.caption("Le tue riserve sono sufficienti per coprire la durata a questa intensità.")
                  
                  else:
-                     st.success(f"### ✅ Strategia Minima: {opt_intake} g/h")
-                     if intake_mode_enum == IntakeMode.DISCRETE and cho_unit > 0:
-                         interval_min = int(60 / (opt_intake / cho_unit))
-                         st.info(f"👉 Assumere **1 unità da {cho_unit}g** ogni **{interval_min} minuti**")
-                     else:
-                         st.info(f"👉 Bere **{opt_intake}g** di carboidrati per ogni ora.")
+                      st.success(f"### ✅ Strategia Minima: {opt_intake} g/h")
+                      if intake_mode_enum == IntakeMode.DISCRETE and cho_unit > 0:
+                          interval_min = int(60 / (opt_intake / cho_unit))
+                          st.info(f"👉 Assumere **1 unità da {cho_unit}g** ogni **{interval_min} minuti**")
+                      else:
+                          st.info(f"👉 Bere **{opt_intake}g** di carboidrati per ogni ora.")
 
                  # --- 2. ESEGUIAMO LE DUE SIMULAZIONI PER IL CONFRONTO ---
                  
                  # Scenario A: Il Crollo (0 g/h)
+                 # CORREZIONE: Rimossi argomenti obsoleti use_mader/running_method
                  df_zero, stats_zero = logic.simulate_metabolism(
                      tank, duration, 0, 0, 70, 20, subj, params, 
                      mix_type_input=mix_sel, 
-                     metabolic_curve=curve_to_use, # <--- Corretto
+                     metabolic_curve=curve_to_use, 
                      intake_mode=intake_mode_enum, intake_cutoff_min=intake_cutoff,
                      variability_index=vi_input,
-                     intensity_series=intensity_series,
-                     use_mader=use_mader_sim,
-                     running_method=sim_method # <--- Corretto
+                     intensity_series=intensity_series
                  )
                  
                  # Scenario B: Il Salvataggio (opt_intake g/h)
+                 # CORREZIONE: Rimossi argomenti obsoleti use_mader/running_method
                  df_opt, stats_opt = logic.simulate_metabolism(
                      tank, duration, opt_intake, cho_unit if cho_unit > 0 else 25, 70, 20, subj, params, 
                      mix_type_input=mix_sel, 
-                     metabolic_curve=curve_to_use, # <--- Corretto
+                     metabolic_curve=curve_to_use, 
                      intake_mode=intake_mode_enum, intake_cutoff_min=intake_cutoff,
                      variability_index=vi_input,
-                     intensity_series=intensity_series,
-                     use_mader=use_mader_sim,
-                     running_method=sim_method # <--- Corretto
+                     intensity_series=intensity_series
                  )
 
                  st.markdown("---")
@@ -853,51 +850,50 @@ with tab3:
                  
                  max_y_scale = start_total * 1.1
 
+                 # Funzione helper locale per grafici confronto
                  def plot_enhanced_scenario(df, stats, title, is_bad_scenario):
-                     df_melt = df.melt('Time (min)', value_vars=['Residuo Muscolare', 'Residuo Epatico'], var_name='Riserva', value_name='Grammi')
-                     colors_range = ['#EF9A9A', '#C62828'] if is_bad_scenario else ['#A5D6A7', '#2E7D32']
-                     bg_color = '#FFEBEE' if is_bad_scenario else '#F1F8E9'
-                     
-                     zones = pd.DataFrame([
-                         {'y': 0, 'y2': 20, 'c': '#FFCDD2'}, 
-                         {'y': 20, 'y2': max_y_scale, 'c': bg_color}
-                     ])
-                     
-                     bg = alt.Chart(zones).mark_rect(opacity=0.5).encode(
+                      df_melt = df.melt('Time (min)', value_vars=['Residuo Muscolare', 'Residuo Epatico'], var_name='Riserva', value_name='Grammi')
+                      colors_range = ['#EF9A9A', '#C62828'] if is_bad_scenario else ['#A5D6A7', '#2E7D32']
+                      bg_color = '#FFEBEE' if is_bad_scenario else '#F1F8E9'
+                      
+                      zones = pd.DataFrame([
+                          {'y': 0, 'y2': 20, 'c': '#FFCDD2'}, 
+                          {'y': 20, 'y2': max_y_scale, 'c': bg_color}
+                      ])
+                      
+                      bg = alt.Chart(zones).mark_rect(opacity=0.5).encode(
                         y=alt.Y('y', scale=alt.Scale(domain=[0, max_y_scale]), title='Glicogeno (g)'),
                         y2='y2',
                         color=alt.Color('c', scale=None)
-                     )
-                     
-                     area = alt.Chart(df_melt).mark_area(opacity=0.85).encode(
-                         x='Time (min)',
-                         y=alt.Y('Grammi', stack=True),
-                         color=alt.Color('Riserva', scale=alt.Scale(domain=['Residuo Muscolare', 'Residuo Epatico'], range=colors_range), legend=alt.Legend(orient='bottom', title=None)),
-                         tooltip=['Time (min)', 'Riserva', 'Grammi']
-                     )
-                     
-                     layers = [bg, area, cutoff_line]
-                     
-                     if is_bad_scenario:
-                         bonk_row = df[df['Residuo Epatico'] <= 0]
-                         if not bonk_row.empty:
-                             bonk_time = bonk_row.iloc[0]['Time (min)']
-                             rule = alt.Chart(pd.DataFrame({'x': [bonk_time]})).mark_rule(color='red', strokeDash=[4,4], size=3).encode(x='x')
-                             # FIX VALIDAZIONE: fontWeight invece di weight
-                             text = alt.Chart(pd.DataFrame({'x': [bonk_time], 'y': [max_y_scale*0.5], 't': ['💀 BONK!']})).mark_text(
-                                 align='left', dx=5, color='#B71C1C', size=16, fontWeight='bold' 
-                             ).encode(x='x', y='y', text='t')
-                             layers.extend([rule, text])
-                     else:
-                         final_res = int(stats['final_glycogen'])
-                         final_time = df['Time (min)'].max()
-                         # FIX VALIDAZIONE: fontWeight invece di weight
-                         text = alt.Chart(pd.DataFrame({'x': [final_time], 'y': [final_res], 't': [f'✅ {final_res}g']})).mark_text(
-                             align='right', dy=-15, color='#1B5E20', size=16, fontWeight='bold'
-                         ).encode(x='x', y='y', text='t')
-                         layers.append(text)
-                         
-                     return alt.layer(*layers).properties(title=title, height=320)
+                      )
+                      
+                      area = alt.Chart(df_melt).mark_area(opacity=0.85).encode(
+                          x='Time (min)',
+                          y=alt.Y('Grammi', stack=True),
+                          color=alt.Color('Riserva', scale=alt.Scale(domain=['Residuo Muscolare', 'Residuo Epatico'], range=colors_range), legend=alt.Legend(orient='bottom', title=None)),
+                          tooltip=['Time (min)', 'Riserva', 'Grammi']
+                      )
+                      
+                      layers = [bg, area, cutoff_line]
+                      
+                      if is_bad_scenario:
+                          bonk_row = df[df['Residuo Epatico'] <= 0]
+                          if not bonk_row.empty:
+                              bonk_time = bonk_row.iloc[0]['Time (min)']
+                              rule = alt.Chart(pd.DataFrame({'x': [bonk_time]})).mark_rule(color='red', strokeDash=[4,4], size=3).encode(x='x')
+                              text = alt.Chart(pd.DataFrame({'x': [bonk_time], 'y': [max_y_scale*0.5], 't': ['💀 BONK!']})).mark_text(
+                                  align='left', dx=5, color='#B71C1C', size=16, fontWeight='bold' 
+                              ).encode(x='x', y='y', text='t')
+                              layers.extend([rule, text])
+                      else:
+                          final_res = int(stats['final_glycogen'])
+                          final_time = df['Time (min)'].max()
+                          text = alt.Chart(pd.DataFrame({'x': [final_time], 'y': [final_res], 't': [f'✅ {final_res}g']})).mark_text(
+                              align='right', dy=-15, color='#1B5E20', size=16, fontWeight='bold'
+                          ).encode(x='x', y='y', text='t')
+                          layers.append(text)
+                          
+                      return alt.layer(*layers).properties(title=title, height=320)
 
                  with col_bad:
                      st.altair_chart(plot_enhanced_scenario(df_zero, stats_zero, "🔴 SCENARIO DIGIUNO (Fallimento)", True), use_container_width=True)
@@ -964,5 +960,6 @@ with tab3:
         
     else:
         st.info("Per attivare il Cockpit, esegui prima la simulazione con dati di potenza.")
+
 
 
