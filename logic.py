@@ -10,6 +10,10 @@ def get_concentration_from_vo2max(vo2_max):
     return max(12.0, min(26.0, conc))
 
 def calculate_rer_polynomial(intensity_factor):
+    """
+    Calcola il Respiratory Exchange Ratio basato sull'intensità relativa (IF).
+    Modello polinomiale standard per stimare il consumo di substrati.
+    """
     if_val = intensity_factor
     rer = (-0.000000149 * (if_val**6) + 141.538462237 * (if_val**5) - 565.128206259 * (if_val**4) + 
            890.333333976 * (if_val**3) - 691.679487060 * (if_val**2) + 265.460857558 * if_val - 39.525121144)
@@ -73,7 +77,7 @@ def calculate_tank(subject: Subject):
     
     return {
         "active_muscle_kg": active_muscle,
-        "max_capacity_g": max_total_capacity,         
+        "max_capacity_g": max_total_capacity,          
         "actual_available_g": total_actual_glycogen,   
         "muscle_glycogen_g": current_muscle_glycogen,
         "liver_glycogen_g": current_liver_glycogen,
@@ -145,7 +149,6 @@ def calculate_hourly_tapering(subject, days_data, start_state: GlycogenState = G
         total_cho_input = day['cho_in']
         
         # Calcolo Ore di Veglia (Feeding Window) per distribuire il cibo
-        # Semplificazione: Assumiamo che si mangi uniformemente quando si è svegli e non ci si allena
         waking_hours = 0
         for h in range(24):
             is_sleeping = False
@@ -184,7 +187,6 @@ def calculate_hourly_tapering(subject, days_data, start_state: GlycogenState = G
             
             if status == "SLEEP":
                 hourly_in = 0 # Non mangi mentre dormi
-                # Sintesi facilitata durante il sonno (se c'è surplus precedente, ma qui è real time)
             
             elif status == "WORK":
                 hourly_in = 0 # Assumiamo integrazione separata o nulla nel tapering
@@ -214,10 +216,6 @@ def calculate_hourly_tapering(subject, days_data, start_state: GlycogenState = G
             # Applicazione ai serbatoi (Ripartizione)
             if net_flow > 0:
                 # REFILLING (Priorità Muscolo 70/30)
-                # Se muscolo pieno, tutto a fegato (e viceversa)
-                
-                # Efficienza assorbimento (Sonno penalizza se fosse attivo, ma qui siamo svegli)
-                # Usiamo il fattore qualità del sonno del giorno PRECEDENTE/CORRENTE come efficienza metabolica generale
                 efficiency = day['sleep_factor'] 
                 real_storage = net_flow * efficiency
                 
@@ -235,24 +233,17 @@ def calculate_hourly_tapering(subject, days_data, start_state: GlycogenState = G
                 
             else:
                 # DRAINING
-                # Se stiamo lavorando, abbiamo già diviso out_muscle e out_liver
-                # Se è deficit basale, lo dividiamo 50/50 o attingiamo al fegato
-                
                 abs_deficit = abs(net_flow)
                 
                 if status == "WORK":
                     # Il consumo è già diviso in hourly_out_...
                     # Ma hourly_in potrebbe coprire parte. Semplifichiamo:
-                    # Applichiamo i consumi diretti
-                    # L'input copre prima il fegato (sangue), poi risparmia muscolo
-                    
                     # Ricalcolo flussi separati con intake
                     # Intake supporta prima il fegato (glicemia)
                     liver_balance = (hourly_in) - hourly_out_liver
                     if liver_balance < 0:
                         curr_liver += liver_balance # Scende
                     else:
-                        # Surplus epatico momentaneo protegge muscolo? No, va a scorte o ossidazione
                         curr_liver += liver_balance # Sale o pari
                         
                     curr_muscle -= hourly_out_muscle
@@ -268,7 +259,6 @@ def calculate_hourly_tapering(subject, days_data, start_state: GlycogenState = G
             curr_liver = max(0, curr_liver)
             
             # Costruzione Timestamp per Grafico
-            # Usiamo un datetime fittizio o reale per l'asse X
             ts = pd.Timestamp(day['date_obj']) + pd.Timedelta(hours=h)
             
             hourly_log.append({
@@ -290,14 +280,13 @@ def calculate_hourly_tapering(subject, days_data, start_state: GlycogenState = G
     
     return pd.DataFrame(hourly_log), final_tank
 
-# funzione simulazione metabolica
+# --- 3. SIMULAZIONE METABOLICA (NO MADER - SOLO CROSSOVER) ---
 
 def simulate_metabolism(subject_data, duration_min, constant_carb_intake_g_h, cho_per_unit_g, crossover_pct, 
                         tau_absorption, subject_obj, activity_params, oxidation_efficiency_input=0.80, 
                         custom_max_exo_rate=None, mix_type_input=ChoMixType.GLUCOSE_ONLY, 
                         intensity_series=None, metabolic_curve=None, 
-                        intake_mode=IntakeMode.DISCRETE, intake_cutoff_min=0, variability_index=1.0, 
-                        use_mader=False, running_method="PHYSIOLOGICAL"):
+                        intake_mode=IntakeMode.DISCRETE, intake_cutoff_min=0, variability_index=1.0):
     
     results = []
     initial_muscle_glycogen = subject_data['muscle_glycogen_g']
@@ -324,21 +313,17 @@ def simulate_metabolism(subject_data, duration_min, constant_carb_intake_g_h, ch
     else:
         intensity_factor_reference = 0.8
     
-    # --- FIX RUNNING: CALCOLO KCAL BASE ---
+    # --- CALCOLO KCAL BASE ---
     if mode == 'cycling':
         # Ciclismo: Fisica pura (Watt -> Kcal)
         kcal_per_min_base = (avg_watts * 60) / 4184 / (gross_efficiency / 100.0)
     else:
-        # Running: Stima basata su VO2max invece che formula generica
-        # Assumiamo che la Soglia (HR Threshold) sia al 90% del VO2max
+        # Running: Stima basata su VO2max
         vo2_threshold_pct = 0.90
-        
         # VO2 stimato (ml/kg/min) in base all'intensità cardiaca rispetto alla soglia
         vo2_estimated_relative = subject_obj.vo2_max * vo2_threshold_pct * intensity_factor_reference
-        
         # VO2 assoluto (L/min)
         vo2_estimated_absolute = (vo2_estimated_relative * subject_obj.weight_kg) / 1000.0
-        
         # Kcal/min (1 L O2 ~ 4.85 Kcal a RER misto/alto)
         kcal_per_min_base = vo2_estimated_absolute * 4.85
         
@@ -439,6 +424,7 @@ def simulate_metabolism(subject_data, duration_min, constant_carb_intake_g_h, ch
         g_fat = 0.0
 
         if is_lab_data:
+            # Caso 1: Dati Lab (Interpolazione)
             cho_rate_gh, fat_rate_gh = interpolate_consumption(current_val, metabolic_curve)
             if t > 60:
                 drift = 1.0 + ((t - 60) * 0.0006)
@@ -448,63 +434,27 @@ def simulate_metabolism(subject_data, duration_min, constant_carb_intake_g_h, ch
             g_fat = fat_rate_gh / 60.0
             rer = 0.85 
         else:
-            # --- INTEGRAZIONE MADER (AVANZATA) ---
-            if use_mader:
-                mader_watts_input = current_val # Default Ciclismo
-                
-                # Logica Specifica Corsa
-                if mode == 'running':
-                    # A. STRADA FISIOLOGICA (HR -> Kcal -> Watt Equivalenti)
-                    if running_method == "PHYSIOLOGICAL":
-                         # Invertiamo la formula delle Kcal per trovare i Watt equivalenti allo sforzo cardiaco
-                         # Kcal/min = (Watts * 0.01433) / 0.21 (Efficienza Corsa)
-                         mader_watts_input = (current_kcal_demand * 0.21) / 0.01433
-                    
-                    # B. STRADA MECCANICA (Speed -> Watt)
-                    else:
-                        if current_val > 50: # Input già in Watt (Stryd)
-                             mader_watts_input = current_val
-                        else:
-                             # Input in km/h -> Watt
-                             speed_ms = current_val / 3.6
-                             # Formula approx: Peso * Speed(m/s) * Costo(J/kg/m ~1.04)
-                             mader_watts_input = speed_ms * subject_obj.weight_kg * 1.04
-
-                # Calcolo Mader Puro con Watt (reali o stimati)
-                mader_cho_g_min = calculate_mader_consumption(mader_watts_input, subject_obj)
-                total_cho_demand = mader_cho_g_min
-                
-                # Calcola grassi per differenza calorica
-                # Usiamo le Kcal calcolate dal modello HR (current_kcal_demand) per coerenza col dispendio totale
-                kcal_cho = total_cho_demand * 4.0
-                kcal_fat = max(0, current_kcal_demand - kcal_cho)
-                g_fat = kcal_fat / 9.0
-                
-                # Stima parametri per output
-                if current_kcal_demand > 0:
-                    cho_ratio = kcal_cho / current_kcal_demand
-                rer = 0.7 + (0.3 * cho_ratio)
-            else:
-                # LOGICA STANDARD (CROSSOVER)
-                standard_crossover = 75.0 
-                crossover_val = crossover_pct if crossover_pct else standard_crossover
-                if_shift = (standard_crossover - crossover_val) / 100.0
-                effective_if_for_rer = max(0.3, current_if_moment + if_shift)
-                
-                rer = calculate_rer_polynomial(effective_if_for_rer)
-                base_cho_ratio = (rer - 0.70) * 3.45
-                base_cho_ratio = max(0.0, min(1.0, base_cho_ratio))
-                
-                current_cho_ratio = base_cho_ratio
-                if current_if_moment < 0.85 and t > 60:
-                    hours_past = (t - 60) / 60.0
-                    metabolic_shift = 0.05 * (hours_past ** 1.2) 
-                    current_cho_ratio = max(0.05, base_cho_ratio - metabolic_shift)
-                
-                cho_ratio = current_cho_ratio
-                kcal_cho_demand = current_kcal_demand * cho_ratio
-                total_cho_demand = kcal_cho_demand / 4.1
-                g_fat = (current_kcal_demand * (1.0-cho_ratio) / 9.0) if current_kcal_demand > 0 else 0
+            # Caso 2: LOGICA STANDARD (CROSSOVER)
+            # Questa è l'unica logica rimasta dopo la rimozione di Mader
+            standard_crossover = 75.0 
+            crossover_val = crossover_pct if crossover_pct else standard_crossover
+            if_shift = (standard_crossover - crossover_val) / 100.0
+            effective_if_for_rer = max(0.3, current_if_moment + if_shift)
+            
+            rer = calculate_rer_polynomial(effective_if_for_rer)
+            base_cho_ratio = (rer - 0.70) * 3.45
+            base_cho_ratio = max(0.0, min(1.0, base_cho_ratio))
+            
+            current_cho_ratio = base_cho_ratio
+            if current_if_moment < 0.85 and t > 60:
+                hours_past = (t - 60) / 60.0
+                metabolic_shift = 0.05 * (hours_past ** 1.2) 
+                current_cho_ratio = max(0.05, base_cho_ratio - metabolic_shift)
+            
+            cho_ratio = current_cho_ratio
+            kcal_cho_demand = current_kcal_demand * cho_ratio
+            total_cho_demand = kcal_cho_demand / 4.1
+            g_fat = (current_kcal_demand * (1.0-cho_ratio) / 9.0) if current_kcal_demand > 0 else 0
         
         total_cho_g_min = total_cho_demand
         
@@ -579,9 +529,9 @@ def simulate_metabolism(subject_data, duration_min, constant_carb_intake_g_h, ch
     }
     return pd.DataFrame(results), stats
 
-# --- 4. CALCOLO REVERSE STRATEGY (AGGIORNATA) ---
+# --- 4. CALCOLO REVERSE STRATEGY (AGGIORNATA SENZA MADER) ---
 
-def calculate_minimum_strategy(tank, duration, subj, params, curve_data, mix_type, intake_mode, intake_cutoff_min=0, variability_index=1.0, intensity_series=None, use_mader=False, running_method="PHYSIOLOGICAL"):
+def calculate_minimum_strategy(tank, duration, subj, params, curve_data, mix_type, intake_mode, intake_cutoff_min=0, variability_index=1.0, intensity_series=None):
     """
     Calcola la strategia nutrizionale minima necessaria.
     Itera simulazioni aumentando l'intake finché i serbatoi non rimangono sopra la soglia di sicurezza.
@@ -595,13 +545,13 @@ def calculate_minimum_strategy(tank, duration, subj, params, curve_data, mix_typ
     # Iteriamo l'intake da 0 a 120 g/h con step di 5g
     for intake in range(0, 125, 5):
         
-        # Eseguiamo la simulazione passando TUTTI i parametri, incluso running_method
+        # Eseguiamo la simulazione (rimossi i flag mader e running_method)
         df, stats = simulate_metabolism(
             subject_data=tank, 
             duration_min=duration, 
             constant_carb_intake_g_h=intake, 
             cho_per_unit_g=30, # Valore dummy per il calcolo continuo
-            crossover_pct=75,  # Valore dummy se usiamo Mader
+            crossover_pct=75,  
             tau_absorption=20, 
             subject_obj=subj, 
             activity_params=params, 
@@ -610,9 +560,7 @@ def calculate_minimum_strategy(tank, duration, subj, params, curve_data, mix_typ
             intake_mode=intake_mode, 
             intake_cutoff_min=intake_cutoff_min,
             variability_index=variability_index,
-            intensity_series=intensity_series,
-            use_mader=use_mader,          # <--- Fondamentale
-            running_method=running_method # <--- NUOVO: Passa la modalità Corsa
+            intensity_series=intensity_series
         )
         
         # Verifichiamo i minimi raggiunti durante la gara
@@ -625,23 +573,3 @@ def calculate_minimum_strategy(tank, duration, subj, params, curve_data, mix_typ
             break
             
     return optimal
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
