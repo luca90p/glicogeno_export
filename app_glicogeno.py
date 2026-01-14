@@ -14,11 +14,10 @@ from data_models import (
 )
 
 # --- CONFIGURAZIONE PAGINA ---
-st.set_page_config(page_title="Glycogen Simulator Pro", layout="wide")
-st.title("Glycogen Simulator Pro")
+st.set_page_config(page_title="Glycogen Simulator", layout="wide")
+st.title("Glycogen Simulator")
 st.markdown("""
-Applicazione avanzata per la modellazione delle riserve di glicogeno. 
-Supporta **Atleti Ibridi**, profili metabolici personalizzati e **Simulazione Scenari**.
+Applicazione avanzata per la modellazione delle riserve di glicogeno.
 """)
 
 # --- INIZIALIZZAZIONE MEMORIA VOLATILE ---
@@ -52,7 +51,7 @@ with st.sidebar:
     
     sport_mode = st.radio(
         "Disciplina:", 
-        ["Ciclismo 🚴", "Corsa 🏃"], 
+        ["Ciclismo", "Corsa"], 
         index=saved_sport_idx,
         horizontal=True
     )
@@ -60,7 +59,7 @@ with st.sidebar:
     if "Corsa" in sport_mode:
         selected_sport = SportType.RUNNING
         st.markdown("---")
-        st.markdown("**🧠 Logica Motore Corsa**")
+        st.markdown("**Logica Motore Corsa**")
         # Semplificato: Solo scelta intensità per calcoli calorie
         run_logic_mode = st.radio(
             "Input Intensità:",
@@ -145,7 +144,7 @@ with tab1:
 
         # --- SEZIONE: PROFILO METABOLICO (LAB) ---
         st.markdown("---")
-        with st.expander("🧬 Profilo Metabolico (Test Laboratorio)", expanded=False):
+        with st.expander("Profilo Metabolico (Test Laboratorio)", expanded=False):
             st.info("Inserisci i dati dal test del gas (Metabolimetro) per personalizzare i consumi.")
             active_lab = st.checkbox("Attiva Profilo Metabolico Personalizzato", value=st.session_state.get('use_lab_data', False))
             
@@ -242,7 +241,7 @@ with tab1:
 # =============================================================================
 with tab2:
     if 'base_tank_data' not in st.session_state:
-        st.warning("⚠️ Completa prima il Tab 1.")
+        st.warning("Completa prima il Tab 1.")
         st.stop()
         
     subj_base = st.session_state['base_subject_struct']
@@ -299,10 +298,10 @@ with tab2:
     # --- TABELLA INPUT (RAGGRUPPATA) ---
     cols_layout = [0.8, 2.8, 1.0, 1.4]
     h1, h2, h3, h4 = st.columns(cols_layout)
-    h1.markdown("##### 📅 Data")
-    h2.markdown("##### 🚴 Attività (Tipo, Durata, Intensità, Start)")
-    h3.markdown("##### 🍝 Nutrizione")
-    h4.markdown("##### 💤 Riposo")
+    h1.markdown("##### Data")
+    h2.markdown("##### Attività (Tipo, Durata, Intensità, Start)")
+    h3.markdown("##### Nutrizione")
+    h4.markdown("##### Riposo")
     
     sleep_opts_map = {"Ottimale (>7h)": 1.0, "Sufficiente (6-7h)": 0.95, "Insufficiente (<6h)": 0.85}
     type_opts = ["Riposo", "Ciclismo", "Corsa/Altro"] 
@@ -373,13 +372,13 @@ with tab2:
     st.markdown("---")
 
     # --- SIMULAZIONE ---
-    if st.button("🚀 Calcola Traiettoria Oraria", type="primary"):
+    if st.button("Calcola Traiettoria Oraria", type="primary"):
         df_hourly, final_tank = logic.calculate_hourly_tapering(subj_base, input_result_data, start_state=sel_state)
         
         st.session_state['tank_data'] = final_tank
         st.session_state['subject_struct'] = subj_base
         
-        st.markdown("### 📈 Evoluzione Oraria Riserve (Timeline)")
+        st.markdown("### Evoluzione Oraria Riserve (Timeline)")
         
         df_melt = df_hourly.melt('Timestamp', value_vars=['Muscolare', 'Epatico'], var_name='Riserva', value_name='Grammi')
         c_range = ['#43A047', '#FB8C00'] 
@@ -500,11 +499,11 @@ with tab3:
                 params = {'mode': 'cycling', 'avg_watts': val, 'np_watts': np_val, 'ftp_watts': target_ftp, 'efficiency': 22.0}
             else:
                 if sim_method == "PHYSIOLOGICAL":
-                    st.info("🏃 **Input: Cardio (BPM)**")
+                    st.info(" **Input: Cardio (BPM)**")
                     val = st.slider("FC Media (BPM)", 80, 210, 155, 1)
                     params = {'mode': 'running', 'avg_hr': val, 'threshold_hr': target_thresh_hr}
                 else:
-                    st.info("🏃 **Input: Velocità / Passo**")
+                    st.info(" **Input: Velocità / Passo**")
                     speed_kmh = st.slider("Velocità (km/h)", 6.0, 22.0, 12.0, 0.1)
                     pace_dec = 60 / speed_kmh
                     pace_min = int(pace_dec)
@@ -566,7 +565,7 @@ with tab3:
 
     # --- GRAFICO FIT ---
     if fit_df is not None:
-        with st.expander("📈 Analisi Dettagliata File FIT", expanded=True):
+        with st.expander("Analisi Dettagliata File FIT", expanded=True):
             st.altair_chart(utils.create_fit_plot(fit_df), use_container_width=True)
 
     # --- SELEZIONE MODALITÀ SIMULAZIONE ---
@@ -621,7 +620,7 @@ with tab3:
         m2.metric("Uso Glicogeno Epatico", f"{int(stats_sim['total_liver_used'])} g")
         m3.metric("Uso CHO Esogeno", f"{int(stats_sim['total_exo_used'])} g")
 
-        st.markdown("### 📊 Bilancio Energetico: Richiesta vs. Fonti di Ossidazione")
+        st.markdown("### Bilancio Energetico: Richiesta vs. Fonti di Ossidazione")
         
         # 1. Calcoliamo la colonna del Totale (Somma di tutte le fonti)
         df_sim['Consumo Totale (g/h)'] = (
@@ -738,7 +737,7 @@ with tab3:
                  st.metric("Buffer Energetico", "Sicuro")
 
         st.markdown("---")
-        st.markdown("### 📋 Cronotabella Operativa")
+        st.markdown("### Cronotabella Operativa")
         if intake_mode_enum == IntakeMode.DISCRETE and cho_h > 0 and cho_unit > 0:
             schedule = []
             current_time = intake_interval
@@ -768,7 +767,7 @@ with tab3:
     
     else:
         # --- CALCOLO REVERSE STRATEGY ---
-        st.subheader("🎯 Calcolatore Strategia Minima")
+        st.subheader("Calcolatore Strategia Minima")
         st.markdown("Il sistema calcolerà l'apporto di carboidrati minimo necessario per terminare la gara senza crisi.")
         
         # FIX IMPORTANTE: Se il lab data è disattivato, forziamo None
@@ -795,9 +794,9 @@ with tab3:
                       st.success(f"### ✅ Strategia Minima: {opt_intake} g/h")
                       if intake_mode_enum == IntakeMode.DISCRETE and cho_unit > 0:
                           interval_min = int(60 / (opt_intake / cho_unit))
-                          st.info(f"👉 Assumere **1 unità da {cho_unit}g** ogni **{interval_min} minuti**")
+                          st.info(f"Assumere **1 unità da {cho_unit}g** ogni **{interval_min} minuti**")
                       else:
-                          st.info(f"👉 Bere **{opt_intake}g** di carboidrati per ogni ora.")
+                          st.info(f"Bere **{opt_intake}g** di carboidrati per ogni ora.")
 
                  # --- 2. ESEGUIAMO LE DUE SIMULAZIONI PER IL CONFRONTO ---
                  
@@ -861,7 +860,7 @@ with tab3:
                           if not bonk_row.empty:
                               bonk_time = bonk_row.iloc[0]['Time (min)']
                               rule = alt.Chart(pd.DataFrame({'x': [bonk_time]})).mark_rule(color='red', strokeDash=[4,4], size=3).encode(x='x')
-                              text = alt.Chart(pd.DataFrame({'x': [bonk_time], 'y': [max_y_scale*0.5], 't': ['💀 BONK!']})).mark_text(
+                              text = alt.Chart(pd.DataFrame({'x': [bonk_time], 'y': [max_y_scale*0.5], 't': ['BONK!']})).mark_text(
                                   align='left', dx=5, color='#B71C1C', size=16, fontWeight='bold' 
                               ).encode(x='x', y='y', text='t')
                               layers.extend([rule, text])
@@ -891,14 +890,14 @@ with tab3:
                      st.caption(f"L'integrazione ha preservato {saved_grams}g di glicogeno extra, garantendo l'arrivo.")
 
                  # --- Dettagli Tecnici ---
-                 with st.expander("🔎 Dettagli Tecnici Avanzati"):
+                 with st.expander("Dettagli Tecnici Avanzati"):
                      st.write(f"**Dispendio Totale:** {int(stats_opt['kcal_total_h'])} kcal")
                      st.write(f"**CHO Ossidati Totali:** {int(df_opt['Carboidrati Esogeni (g)'].sum()/60 + stats_opt['total_liver_used'] + stats_opt['total_muscle_used'])} g")
                      st.write(f"**Di cui da integrazione:** {int(df_opt['Carboidrati Esogeni (g)'].sum()/60)} g")
                      st.write(f"**Grassi Ossidati:** {int(stats_opt['fat_total_g'])} g")
 
              else:
-                 st.error("❌ **IMPOSSIBILE FINIRE LA GARA**")
+                 st.error("**IMPOSSIBILE FINIRE LA GARA**")
                  st.markdown(f"""
                  Anche assumendo il massimo teorico ({120} g/h), le tue riserve si esauriscono prima della fine.
                  
@@ -906,6 +905,7 @@ with tab3:
                  1. **Riduci l'intensità**: Abbassa i Watt/FC medi o il target FTP.
                  2. **Aumenta il Tapering**: Cerca di partire con il serbatoio più pieno (Tab 2).
                  """)
+
 
 
 
