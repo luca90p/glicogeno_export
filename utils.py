@@ -235,9 +235,8 @@ def parse_fit_file_wrapper(uploaded_file, sport_type):
 # ==============================================================================
 def parse_metabolic_report(uploaded_file):
     """
-    Scansiona il file per trovare la riga di intestazione corretta, 
-    indipendentemente da quante righe di metadati ci sono prima.
-    Cerca colonne come 'CHO', 'FAT', 'HR' tramite sinonimi.
+    Scansiona il file per trovare la riga di intestazione corretta.
+    Estrae CHO, FAT e le metriche di intensità (Watt, FC, Speed).
     """
     filename = uploaded_file.name.lower()
     df = None
@@ -245,130 +244,118 @@ def parse_metabolic_report(uploaded_file):
     try:
         uploaded_file.seek(0)
         
-        # 1. STRATEGIA PER EXCEL (.xlsx, .xls)
+        # 1. RILEVAMENTO HEADER
+        # Leggiamo le prime 500 righe come testo per trovare dove inizia la tabella
+        content = uploaded_file.getvalue().decode('latin-1', errors='replace')
+        all_lines = content.splitlines()
+        
+        header_idx = -1
+        sep = ',' # Default per CSV standard
+        
+        # Parole chiave che identificano la riga di intestazione
+        keywords = ['CHO', 'FAT', 'FC', 'WR', 'V\'O2', 'RER']
+        
+        for i, line in enumerate(all_lines[:500]): 
+            # Contiamo quante parole chiave sono presenti nella riga
+            line_upper = line.upper()
+            matches = sum(1 for k in keywords if k in line_upper)
+            
+            if matches >= 3: # Se ne troviamo almeno 3, è l'header
+                header_idx = i
+                # Rileviamo il separatore (conta virgole vs punti e virgola)
+                if line.count(';') > line.count(','): sep = ';'
+                break
+        
+        if header_idx == -1:
+            return None, [], "Intestazione non trovata. Assicurati che il file contenga CHO, FAT, FC."
+
+        # 2. CARICAMENTO DATAFRAME
+        uploaded_file.seek(0)
         if filename.endswith(('.xls', '.xlsx')):
-            # Carichiamo tutto senza header per ispezionare
-            df_temp = pd.read_excel(uploaded_file, header=None)
-            
-            # Algoritmo di ricerca header
-            header_idx = find_header_row(df_temp)
-            
-            if header_idx is not None:
-                # Ricarichiamo usando la riga trovata come header
-                uploaded_file.seek(0)
-                df = pd.read_excel(uploaded_file, header=header_idx)
-            else:
-                return None, [], "Impossibile trovare una riga di intestazione valida (cercavo CHO, FAT, HR/Watt)."
-
-        # 2. STRATEGIA PER CSV/TXT (.csv, .txt)
+            df = pd.read_excel(uploaded_file, header=header_idx)
         else:
-            # Leggiamo le prime 500 righe come testo per trovare l'header
-            lines = []
-            uploaded_file.seek(0)
-            
-            # Decodifica sicura (gestisce caratteri strani)
-            content = uploaded_file.getvalue().decode('latin-1', errors='replace')
-            all_lines = content.splitlines()
-            
-            header_idx = -1
-            sep = ',' # Default
-            
-            # Parole chiave che DEVONO essere presenti nella riga di header
-            # Cerchiamo una riga che contenga ALMENO una metrica di substrato E una di intensità
-            keywords_sub = ['CHO', 'FAT', 'CARBO', 'LIPID']
-            keywords_int = ['HR', 'FC', 'BPM', 'WATT', 'POWER', 'WR']
-            
-            for i, line in enumerate(all_lines[:500]): # Cerca nelle prime 500 righe
-                line_upper = line.upper()
-                
-                # Check se la riga contiene le parole chiave
-                has_sub = any(k in line_upper for k in keywords_sub)
-                has_int = any(k in line_upper for k in keywords_int)
-                
-                if has_sub and has_int:
-                    header_idx = i
-                    # Indovina il separatore (conta se ci sono più virgole o punti e virgola)
-                    if line.count(';') > line.count(','):
-                        sep = ';'
-                    else:
-                        sep = ',' # O tabulazione se fosse txt
-                        if line.count('\t') > line.count(','): sep = '\t'
-                    break
-            
-            if header_idx != -1:
-                # Carichiamo il CSV saltando le righe inutili
-                uploaded_file.seek(0)
-                df = pd.read_csv(uploaded_file, sep=sep, skiprows=header_idx, engine='python')
-            else:
-                return None, [], "Header non trovato. Verifica che il file contenga colonne nominate CHO/FAT e HR/Watt."
+            df = pd.read_csv(uploaded_file, sep=sep, skiprows=header_idx, engine='python')
 
-        # 3. NORMALIZZAZIONE E ESTRAZIONE COLONNE
         if df is None or df.empty:
-            return None, [], "File vuoto dopo il parsing."
+            return None, [], "File vuoto dopo la lettura."
 
-        # Pulizia nomi colonne (rimuove spazi, tutto maiuscolo)
+        # 3. PULIZIA NOMI COLONNE
+        # Rimuoviamo spazi e convertiamo in maiuscolo per facilitare la ricerca
         df.columns = [str(c).strip().upper() for c in df.columns]
         
         clean_df = pd.DataFrame()
         
-        # Funzione Helper per trovare colonne flessibili
+        # Funzione helper per cercare colonne con sinonimi
         def get_col_data(synonyms):
             for col in df.columns:
-                # Controlla se uno dei sinonimi è contenuto nel nome della colonna
+                # Match esatto (priorità) o parziale
+                if col in synonyms:
+                    return col
+            # Se non trova match esatti, cerca parziali
+            for col in df.columns:
                 for syn in synonyms:
-                    # Match esatto o "parola contenuta" (es. "CHO (g/min)" matcha "CHO")
-                    if syn == col or f"{syn} " in col or f" {syn}" in col or f"[{syn}]" in col or f"/{syn}" in col:
-                        # Trovata! Convertiamo in numeri
-                        series = df[col].astype(str)
-                        series = series.str.replace(',', '.', regex=False) # Fix virgole europee
-                        # Rimuoviamo caratteri non numerici
-                        series = pd.to_numeric(series, errors='coerce')
-                        return series
+                    if syn in col: return col
             return None
 
-        # Ricerca Colonne tramite Dizionario Sinonimi
-        col_cho = get_col_data(['CHO', 'CARBOHYDRATES', 'QCHO', 'CARBO'])
-        col_fat = get_col_data(['FAT', 'LIPIDS', 'QFAT', 'LIPIDI'])
-        
-        # Se mancano i dati vitali, stop
-        if col_cho is None or col_fat is None:
-            # Fallback estremo per Metasoft se i nomi sono strani ma la struttura è fissa (G, V, X)
-            # Questo si attiva SOLO se il nome colonna fallisce, ma cerca dinamicamente
-            return None, [], f"Colonne CHO/FAT non identificate. Colonne trovate: {list(df.columns)}"
+        # Funzione conversione numeri (gestisce virgole europee)
+        def to_float(col_name):
+            if not col_name: return None
+            s = df[col_name].astype(str).str.replace(',', '.', regex=False)
+            # Rimuove caratteri non numerici strani
+            s = pd.to_numeric(s, errors='coerce')
+            return s
 
-        clean_df['CHO'] = col_cho
-        clean_df['FAT'] = col_fat
+        # --- MAPPATURA METRICHE ---
         
-        # Ricerca Intensità (Watt o FC)
-        col_watt = get_col_data(['WATT', 'POWER', 'POW', 'WR', 'LOAD'])
-        col_hr = get_col_data(['HR', 'FC', 'BPM', 'HEART', 'HF'])
+        # 1. Substrati (Fondamentali)
+        c_cho = get_col_data(['CHO', 'QCHO', 'CARBOHYDRATES'])
+        c_fat = get_col_data(['FAT', 'QFAT', 'LIPIDS'])
         
-        available_metrics = []
-        if col_watt is not None and col_watt.max() > 50: # Check se ha valori sensati
-            clean_df['Watt'] = col_watt
-            available_metrics.append('Watt')
-            
-        if col_hr is not None and col_hr.max() > 40:
-            clean_df['HR'] = col_hr
-            available_metrics.append('HR')
-            
-        if not available_metrics:
-            return None, [], "Trovati CHO/FAT ma nessuna intensità (Watt o FC)."
-
-        # 4. PULIZIA FINALE DATI
+        clean_df['CHO'] = to_float(c_cho)
+        clean_df['FAT'] = to_float(c_fat)
+        
         clean_df.dropna(subset=['CHO', 'FAT'], inplace=True)
+        if clean_df.empty: return None, [], "Dati CHO/FAT non validi o assenti."
+
+        # 2. Intensità (Watt, FC, Speed)
+        available_metrics = []
         
-        # Rimuovi zeri o valori negativi assurdi
-        clean_df = clean_df[(clean_df['CHO'] >= 0) & (clean_df['FAT'] >= 0)]
+        # WATT (Cerca 'WR' specifico per il tuo file, poi 'WATT')
+        c_watt = get_col_data(['WR', 'WATT', 'POWER', 'POW', 'LOAD'])
+        s_watt = to_float(c_watt)
+        if s_watt is not None and s_watt.max() > 10: # Filtro rumore
+            clean_df['Watt'] = s_watt
+            available_metrics.append('Watt')
+
+        # HEART RATE (Cerca 'FC' specifico per il tuo file, poi 'HR')
+        c_hr = get_col_data(['FC', 'HR', 'BPM', 'HEART'])
+        s_hr = to_float(c_hr)
+        if s_hr is not None and s_hr.max() > 40:
+            clean_df['HR'] = s_hr
+            available_metrics.append('HR')
+
+        # SPEED (Cerca 'V' specifico per il tuo file, poi 'SPEED')
+        # Nota: 'V' da solo è ambiguo, controlliamo che sia proprio 'V' o 'SPEED'
+        c_spd = None
+        if 'V' in df.columns: c_spd = 'V' # Priorità al nome esatto del tuo file
+        else: c_spd = get_col_data(['SPEED', 'VELOCITY', 'KM/H'])
         
-        # 5. AUTO-CORREZIONE UNITÀ DI MISURA
-        # Se i valori medi sono < 10, sono quasi sicuramente g/min. L'app vuole g/h.
+        s_spd = to_float(c_spd)
+        if s_spd is not None and s_spd.max() > 2: # Se max > 2 km/h
+            clean_df['Speed'] = s_spd
+            available_metrics.append('Speed')
+
+        if not available_metrics:
+            return None, [], "Nessuna metrica di intensità (Watt/FC/Speed) trovata."
+
+        # --- 4. CHECK UNITÀ DI MISURA ---
+        # Se i valori medi di CHO sono < 10, sono g/min -> converti in g/h
         if clean_df['CHO'].mean() < 10.0:
             clean_df['CHO'] *= 60
             clean_df['FAT'] *= 60
             
-        # Ordiniamo i dati per l'asse X (altrimenti il grafico impazzisce se i dati non sono sequenziali)
-        primary_sort = 'Watt' if 'Watt' in clean_df.columns else 'HR'
+        # Ordiniamo i dati per l'asse X principale per evitare grafici a "gomitolo"
+        primary_sort = available_metrics[0]
         clean_df = clean_df.sort_values(by=primary_sort).reset_index(drop=True)
 
         return clean_df, available_metrics, None
@@ -422,6 +409,7 @@ def calculate_zones_cycling(ftp):
     return [{"Zona": f"Z{i+1}", "Valore": f"{int(ftp*p)} W"} for i, p in enumerate([0.55, 0.75, 0.90, 1.05, 1.20])]
 def calculate_zones_running_hr(thr):
     return [{"Zona": f"Z{i+1}", "Valore": f"{int(thr*p)} bpm"} for i, p in enumerate([0.85, 0.89, 0.94, 0.99, 1.02])]
+
 
 
 
