@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 
 import logic
 import utils
-from db_manager import DBManager # Importiamo il nostro manager
 from data_models import (
     Sex, TrainingStatus, SportType, DietType, FatigueState, 
     SleepQuality, MenstrualPhase, ChoMixType, Subject, IntakeMode
@@ -22,21 +21,12 @@ Applicazione avanzata per la modellazione delle riserve di glicogeno.
 Supporta **Atleti Ibridi**, profili metabolici personalizzati e **Simulazione Scenari**.
 """)
 
-if not utils.check_password():
-    st.stop()
-
-# --- 0. INIZIALIZZAZIONE DB E LOGIN SIMULATO ---
-if 'db' not in st.session_state:
-    st.session_state['db'] = DBManager()
-
-# In produzione questo arriverà dal login vero. 
-# Ora usiamo una mail fissa per testare il salvataggio.
-current_user_email = "atleta_test@example.com"
-# Carichiamo i dati dal DB solo all'avvio (o se forzato)
+# Inizializzazione default memoria volatile
 if 'user_profile' not in st.session_state:
-    st.session_state['user_profile'] = st.session_state['db'].get_or_create_user_profile(current_user_email)
-
-# Shortcut per leggibilità
+    st.session_state['user_profile'] = {
+        'weight': 70.0, 'vo2': 55.0, 'ftp': 250, 'fat': 12.0, 'sport': 'Cycling'
+    }
+# Alias comodo
 db_data = st.session_state['user_profile']
 
 def create_risk_zone_chart(df_data, title, max_y):
@@ -223,59 +213,6 @@ with st.sidebar:
         k2.metric("VLaMax Calc.", f"{user_vlamax:.2f}")
 
     st.markdown("---")
-# --- BOTTONE DI SALVATAGGIO ---
-    # Fondamentale: Streamlit ricarica tutto ad ogni click. 
-    # Dobbiamo esplicitamente salvare lo stato attuale nel DB.
-    if st.button("💾 Salva Profilo nel Cloud"):
-        new_data = {
-            "weight": weight,
-            "vo2": user_vo2,
-            "vla": user_vlamax,
-            "sport": "Running" if "Corsa" in sport_mode else "Cycling",
-            # ... raccogli qui gli altri valori (ftp, grasso, ecc) ...
-            "ftp": st.session_state.get('ftp_watts_input', db_data['ftp']), 
-            "fat": st.session_state.get('body_fat_pct_input', db_data['fat']) 
-            # Nota: devi assicurarti che anche nel Tab1 usi key='body_fat_pct_input' 
-            # o recuperi il valore variabile locale
-        }
-        
-        if st.session_state['db'].update_profile(db_data['id'], new_data):
-            st.session_state['user_profile'] = new_data # Aggiorna la cache locale
-            st.success("Profilo salvato! I dati saranno qui al prossimo riavvio.")
-        else:
-            st.error("Errore nel salvataggio.")
-            
-    st.markdown("---")
-    st.markdown("### ⚠️ Zona Pericolo")
-    if st.button("🧨 RESETTA DATABASE (Cancella Tutto)"):
-        import os
-        # Percorso del file db
-        db_file = "glicogeno.db"
-        
-        # 1. Chiudiamo le connessioni esistenti (Reset del manager)
-        if 'db' in st.session_state:
-            del st.session_state['db']
-        
-        # 2. Cancelliamo fisicamente il file
-        if os.path.exists(db_file):
-            try:
-                os.remove(db_file)
-                st.success("Database cancellato con successo!")
-                
-                # 3. Puliamo la cache per forzare la ricreazione
-                for key in list(st.session_state.keys()):
-                    del st.session_state[key]
-                
-                st.warning("L'app si riavvierà tra 2 secondi...")
-                import time
-                time.sleep(2)
-                st.rerun()
-            except Exception as e:
-                st.error(f"Impossibile cancellare: {e}")
-        else:
-            st.info("Nessun database trovato da cancellare.")
-
-
 
 # --- DEFINIZIONE TABS ---
 tab1, tab2, tab3, tab4 = st.tabs(["Dati & Upload", "Simulazione Gara", "Analisi Avanzata", "🧪 Lab Mader"])
@@ -1546,6 +1483,7 @@ with tab4:
         ax4.legend(loc='upper left')
         ax4.grid(True, alpha=0.3)
         st.pyplot(fig4)
+
 
 
 
