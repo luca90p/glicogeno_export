@@ -907,39 +907,7 @@ with tab3:
                  2. **Aumenta il Tapering**: Cerca di partire con il serbatoio più pieno (Tab 2).
                  """)
 
-    # --- DIGITAL TWIN COCKPIT (Semplificato: Niente W') ---
-    st.markdown("---")
-    st.subheader("🏎️ Digital Twin Cockpit (Replay Gara)")
 
-    if 'df_sim' in locals() and intensity_series is not None:
-        
-        sim_len = len(df_sim)
-        max_slider = sim_len - 1
-        t_cursor = st.slider("⏱️ Timeline Gara (minuto)", 0, max_slider, 0, key="replay_slider")
-        
-        idx_intensity = min(t_cursor, len(intensity_series) - 1)
-        curr_watt = intensity_series[idx_intensity]
-        
-        row_sim = df_sim.iloc[t_cursor]
-        curr_gly_musc = row_sim['Residuo Muscolare']
-        curr_gly_liv = row_sim['Residuo Epatico']
-        start_gly_tot = tank['max_capacity_g'] 
-        if 'start_total' in locals(): start_gly_tot = start_total
-        
-        gly_tot_curr = curr_gly_musc + curr_gly_liv
-        gly_pct = max(0.0, min(1.0, gly_tot_curr / start_gly_tot)) if start_gly_tot > 0 else 0
-        g_color = "🟢" if gly_pct > 0.4 else "🟡" if gly_pct > 0.2 else "🔴"
-
-        k1, k2, k3 = st.columns(3)
-        k1.metric("⏱️ Tempo", f"{t_cursor} min")
-        k2.metric("⚡ Potenza/Intensità", f"{int(curr_watt)}")
-        k3.metric(f"{g_color} Glicogeno", f"{int(gly_tot_curr)} g", delta=f"{int(gly_pct*100)}%")
-
-        st.write("**⛽ Serbatoio Glicogeno Totale**")
-        st.progress(gly_pct)
-        
-    else:
-        st.info("Per attivare il Cockpit, esegui prima la simulazione con dati di potenza.")
 
 
 
