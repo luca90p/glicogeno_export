@@ -284,7 +284,7 @@ def parse_metabolic_report(uploaded_file):
         intensities = ["WATT", "LOAD", "POWER", "POW", "HR", "BPM", "HEART", "FC", "SPEED", "VEL", "KM/H"]
 
         # Scansioniamo le prime 50 righe
-        for i, row in df_raw.head(50).iterrows():
+        for i, row in df_raw.head(300).iterrows():
             # Converte tutta la riga in una stringa maiuscola per cercare
             row_text = " ".join([str(x).upper() for x in row.values if pd.notna(x)])
             
@@ -397,6 +397,7 @@ def calculate_zones_cycling(ftp):
     return [{"Zona": f"Z{i+1}", "Valore": f"{int(ftp*p)} W"} for i, p in enumerate([0.55, 0.75, 0.90, 1.05, 1.20])]
 def calculate_zones_running_hr(thr):
     return [{"Zona": f"Z{i+1}", "Valore": f"{int(thr*p)} bpm"} for i, p in enumerate([0.85, 0.89, 0.94, 0.99, 1.02])]
+
 
 
 
