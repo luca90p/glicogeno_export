@@ -8,25 +8,6 @@ import fitparse
 import altair as alt
 from data_models import SportType
 
-# --- SISTEMA DI PROTEZIONE ---
-def check_password():
-    def password_entered():
-        if st.session_state["password"] == "glicogeno2025": 
-            st.session_state["password_correct"] = True
-            del st.session_state["password"]  
-        else:
-            st.session_state["password_correct"] = False
-
-    if "password_correct" not in st.session_state:
-        st.text_input("Inserisci Password", type="password", on_change=password_entered, key="password")
-        return False
-    elif not st.session_state["password_correct"]:
-        st.text_input("Inserisci Password", type="password", on_change=password_entered, key="password")
-        st.error("Password errata.")
-        return False
-    else:
-        return True
-
 # ==============================================================================
 # MODULO CALCOLO POTENZA NORMALIZZATA (NP)
 # ==============================================================================
@@ -416,6 +397,7 @@ def calculate_zones_cycling(ftp):
     return [{"Zona": f"Z{i+1}", "Valore": f"{int(ftp*p)} W"} for i, p in enumerate([0.55, 0.75, 0.90, 1.05, 1.20])]
 def calculate_zones_running_hr(thr):
     return [{"Zona": f"Z{i+1}", "Valore": f"{int(thr*p)} bpm"} for i, p in enumerate([0.85, 0.89, 0.94, 0.99, 1.02])]
+
 
 
 
