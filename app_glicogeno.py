@@ -81,39 +81,25 @@ with st.sidebar:
 
     st.header("2. Fisiologia")
     
-    # MODALITÀ DI INPUT (SEMPLIFICATA: NO VLaMax/Mader)
-    input_mode = st.radio("Metodo Configurazione:", 
-                          ["Manuale (Esperto)", "Stima da FTP"], 
-                          index=1)
+    # MODALITÀ DI INPUT: SOLO MANUALE
+    st.caption("Inserisci il tuo VO2max (da test o smartwatch).")
     
-    user_vo2 = 55.0 # Default
+    # Recuperiamo il valore di default dalla sessione o usiamo 55
+    default_vo2 = float(db_data.get('vo2', 55.0))
+    
+    user_vo2 = st.number_input(
+        "VO2max (ml/kg/min)", 
+        min_value=30.0, 
+        max_value=90.0, 
+        value=default_vo2, 
+        step=1.0,
+        help="Volume massimo di ossigeno consumato. Se non lo conosci, 45-50 è un valore medio per amatori, 60+ per atleti allenati."
+    )
 
-    if input_mode == "Manuale (Esperto)":
-        user_vo2 = st.number_input("VO2max", 30.0, 90.0, float(db_data['vo2']), 1.0)
-        
-    elif input_mode == "Stima da FTP":
-        st.caption("Stima il VO2max basandosi sul tuo FTP.")
-        
-        # Input FTP per stima
-        val_ftp_est = st.number_input("FTP / CP20 (Watt)", 100, 600, 250)
-        
-        # Semplificazione: usiamo un VLaMax medio fisso per la stima inversa del VO2
-        # dato che l'utente ha voluto rimuovere la complessità Mader
-        if st.button("🔄 Calcola VO2max"):
-            with st.spinner("Calcolo..."):
-                # Usiamo logic.find_vo2max (che è stato rimosso? NO, verifichiamo logic.py)
-                # Nel logic.py pulito ho rimosso le funzioni Mader. 
-                # QUINDI: Usiamo una formula semplificata qui nel frontend o una stima generica.
-                # Formula Coggan approssimata: VO2max = (FTP * 1000) / Peso / 75 (eff) + offset
-                # O meglio: VO2 = (FTP / 0.95) / Peso * 12 (molto rough)
-                
-                # Usiamo la logica standard ACSM per il ciclismo inversa
-                # W = [(VO2 - 7) * Kg] / 1.8 -> VO2 = (W * 1.8 / Kg) + 7
-                est_vo2 = (val_ftp_est * 10.8 / weight) + 7.0 
-                st.session_state['calculated_vo2'] = est_vo2
-                st.success(f"VO2max Stimato (ACSM): {est_vo2:.1f}")
-                
-        user_vo2 = st.session_state.get('calculated_vo2', 55.0)
+    # VLaMax fittizia (non più usata nei calcoli, ma richiesta dalla struttura dati Subject)
+    user_vlamax = 0.5 
+    
+    st.markdown("---")
 
     # VLaMax fittizia per compatibilità modelli interni (anche se non usata per calcoli)
     user_vlamax = 0.5 
@@ -960,6 +946,7 @@ with tab3:
         
     else:
         st.info("Per attivare il Cockpit, esegui prima la simulazione con dati di potenza.")
+
 
 
 
