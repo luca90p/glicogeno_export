@@ -629,17 +629,73 @@ with tab3:
         st.markdown("---")
         st.subheader("Analisi Cinetica e Substrati")
         
+        # --- DASHBOARD RISULTATI ---
+        st.markdown("---")
+        st.subheader("Analisi Cinetica e Substrati")
+        
+        # 1. Metriche Numeriche (KPI)
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Intensity Factor (IF)", f"{stats_sim['intensity_factor']:.2f}", help="Basato su NP se disponibile")
         c2.metric("RER Stimato (RQ)", f"{stats_sim['avg_rer']:.2f}")
         c3.metric("Ripartizione Substrati", f"{int(stats_sim['cho_pct'])}% CHO", f"{100-int(stats_sim['cho_pct'])}% FAT", delta_color="off")
         c4.metric("Glicogeno Residuo", f"{int(stats_sim['final_glycogen'])} g", delta=f"{int(stats_sim['final_glycogen'] - start_total)} g")
 
-        # Visualizzazioni grafiche (omesse per brevità, sono identiche al codice originale)
-        st.altair_chart(
-            alt.Chart(df_sim).mark_line(color='green').encode(x='Time (min)', y='Residuo Totale') + cutoff_line, 
-            use_container_width=True
+        st.markdown("---")
+        
+        # 2. GRAFICO IMPILATO: BILANCIO ENERGETICO (RICHIESTA vs FONTI)
+        st.markdown("### 📊 Bilancio Energetico: Richiesta vs. Fonti di Ossidazione")
+        
+        # Calcoliamo la colonna del Totale (Somma di tutte le fonti) per la linea di contorno
+        df_sim['Consumo Totale (g/h)'] = (
+            df_sim['Glicogeno Epatico (g)'] + 
+            df_sim['Carboidrati Esogeni (g)'] + 
+            df_sim['Ossidazione Lipidica (g)'] + 
+            df_sim['Glicogeno Muscolare (g)']
         )
+        
+        # Preparazione dati per l'area stack (Melt del dataframe)
+        # Ordine visuale: Grassi (fondo) -> Esogeni -> Fegato -> Muscolo (cima)
+        df_melt = df_sim.melt(
+            'Time (min)', 
+            value_vars=['Ossidazione Lipidica (g)', 'Carboidrati Esogeni (g)', 'Glicogeno Epatico (g)', 'Glicogeno Muscolare (g)'], 
+            var_name='Fonte', 
+            value_name='g/h'
+        )
+        
+        # Definizione Ordine e Colori
+        order = ['Glicogeno Muscolare (g)', 'Glicogeno Epatico (g)', 'Carboidrati Esogeni (g)', 'Ossidazione Lipidica (g)']
+        # Rosso (Muscolo), Arancio Scuro (Fegato), Blu (Gel/Drink), Giallo (Grassi)
+        colors = ['#EF5350', '#BF360C', '#1E88E5', '#FFCA28'] 
+        
+        # A. Grafico a Aree (Le fonti impilate)
+        chart_stack = alt.Chart(df_melt).mark_area().encode(
+            x=alt.X('Time (min)', title='Durata (min)'),
+            y=alt.Y('g/h', title='Ossidazione (g/h)'), 
+            color=alt.Color('Fonte', scale=alt.Scale(domain=order, range=colors), legend=alt.Legend(orient='bottom', title=None)),
+            tooltip=['Time (min)', 'Fonte', 'g/h']
+        )
+        
+        # B. Linea del Totale (Il contorno superiore che indica la richiesta energetica totale)
+        chart_total = alt.Chart(df_sim).mark_line(color='black', strokeDash=[3,3], opacity=0.6, strokeWidth=1).encode(
+            x='Time (min)',
+            y='Consumo Totale (g/h)',
+            tooltip=[alt.Tooltip('Time (min)'), alt.Tooltip('Consumo Totale (g/h)', format='.1f', title='Totale Richiesto')]
+        )
+        
+        # Uniamo tutto e aggiungiamo la linea di cutoff (fine integrazione)
+        final_chart = (chart_stack + chart_total + cutoff_line).interactive().properties(height=380)
+        st.altair_chart(final_chart, use_container_width=True)
+
+        # 3. GRAFICO CONSUMO GRASSI (SOLO LINEA)
+        with st.expander("📉 Dettaglio Ossidazione Lipidica (Fat Oxidation)"):
+            chart_fat = alt.Chart(df_sim).mark_line(color='#FFC107', strokeWidth=3).encode(
+                x=alt.X('Time (min)'),
+                y=alt.Y('Ossidazione Lipidica (g)', title='Grassi (g/h)'),
+                tooltip=['Time (min)', 'Ossidazione Lipidica (g)']
+            ).properties(height=250)
+            st.altair_chart(chart_fat + cutoff_line, use_container_width=True)
+
+        st.markdown("---")
 
         # Analisi Criticità
         liver_bonk = df_sim[df_sim['Residuo Epatico'] <= 0]
@@ -727,3 +783,4 @@ with tab3:
         
     else:
         st.info("Per attivare il Cockpit, esegui prima la simulazione con dati di potenza.")
+
