@@ -235,8 +235,8 @@ def parse_fit_file_wrapper(uploaded_file, sport_type):
 # ==============================================================================
 def parse_metabolic_report(uploaded_file):
     """
-    Legge file CSV/Excel da metabolimetro.
-    Corretto bug 'False Friends' (es. V'O2/FC scambiato per FC).
+    Legge file CSV/Excel, estrae CHO/FAT/Intensità e APPLICA SMOOTHING
+    per correggere il rumore dei sensori e garantire curve crescenti.
     """
     filename = uploaded_file.name.lower()
     df = None
@@ -247,7 +247,6 @@ def parse_metabolic_report(uploaded_file):
         # 1. STRATEGIA EXCEL
         if filename.endswith(('.xls', '.xlsx')):
             try:
-                # Carica tutto, cerca l'header
                 df_temp = pd.read_excel(uploaded_file, header=None)
                 header_idx = find_header_row_index(df_temp)
                 if header_idx is not None:
@@ -261,23 +260,19 @@ def parse_metabolic_report(uploaded_file):
             encodings_to_try = ['latin-1', 'utf-8', 'cp1252']
             content = None
             used_encoding = None
-            
             for enc in encodings_to_try:
                 try:
                     uploaded_file.seek(0)
                     content = uploaded_file.read().decode(enc)
                     used_encoding = enc
                     break
-                except UnicodeDecodeError:
-                    continue
+                except UnicodeDecodeError: continue
             
             if content is None: return None, [], "Encoding non riconosciuto."
 
             all_lines = content.splitlines()
             header_idx = -1
             sep = ',' 
-            
-            # Cerca header (deve avere CHO/FAT e HR/Watt/FC)
             for i, line in enumerate(all_lines[:600]): 
                 line_upper = line.upper()
                 if ('CHO' in line_upper or 'CARB' in line_upper) and ('FAT' in line_upper or 'LIPID' in line_upper):
@@ -291,7 +286,6 @@ def parse_metabolic_report(uploaded_file):
                 try:
                     df = pd.read_csv(uploaded_file, sep=sep, skiprows=header_idx, encoding=used_encoding, engine='python')
                 except:
-                    # Fallback manuale
                     uploaded_file.seek(0)
                     df = pd.read_csv(uploaded_file, sep=sep, header=None, encoding=used_encoding, engine='python')
                     df = df.iloc[header_idx+1:].reset_index(drop=True)
@@ -299,31 +293,17 @@ def parse_metabolic_report(uploaded_file):
             else:
                 return None, [], "Intestazione non trovata."
 
-        # 3. PULIZIA E MAPPING INTELLIGENTE
+        # 3. PULIZIA
         if df is None or df.empty: return None, [], "File vuoto."
-
-        # Pulizia nomi colonne
         df.columns = [str(c).strip().upper() for c in df.columns]
         clean_df = pd.DataFrame()
         
-        # --- FUNZIONE GET_COL "CHIRURGICA" ---
+        # Helper ricerca colonne (con blocchi)
         def get_col(candidates, block_chars=None):
             if block_chars is None: block_chars = []
-            
-            # Pass 1: Match Esatto (Priorità assoluta)
             for col in df.columns:
-                if col in candidates:
-                    return col
-            
-            # Pass 2: Match Parziale (con verifica blocchi)
-            for col in df.columns:
-                # Se contiene caratteri bloccati (es. '/' per HR), saltala!
-                if any(bc in col for bc in block_chars):
-                    continue
-                    
+                if any(bc in col for bc in block_chars): continue
                 for cand in candidates:
-                    # Cerca parola intera o confini chiari
-                    # es. "HR" matcha "HR(bpm)" ma NON "VO2/HR" grazie a block_chars
                     if cand == col or f" {cand}" in col or f"{cand} " in col or f"({cand})" in col or f"[{cand}]" in col:
                         return col
             return None
@@ -332,13 +312,11 @@ def parse_metabolic_report(uploaded_file):
         c_cho = get_col(['CHO', 'CARBOHYDRATES', 'QCHO'])
         c_fat = get_col(['FAT', 'LIPIDS', 'QFAT'])
         
-        # Estrazione Intensità (Con blocchi per evitare rapporti)
-        # Blocchiamo '/' per evitare V'O2/FC quando cerchiamo FC
+        # Estrazione Intensità
         c_hr = get_col(['FC', 'HR', 'BPM', 'HEART'], block_chars=['/', '%'])
         c_watt = get_col(['WR', 'WATT', 'POWER', 'POW', 'LOAD'], block_chars=['/'])
-        c_spd = get_col(['V', 'SPEED', 'VELOCITY', 'KM/H'], block_chars=['/', 'VO2']) # Blocca V'O2 se cerchi V
+        c_spd = get_col(['V', 'SPEED', 'VELOCITY', 'KM/H'], block_chars=['/', 'VO2'])
 
-        # Funzione conversione
         def to_float(col_name):
             if not col_name: return None
             s = df[col_name].astype(str).str.replace(',', '.', regex=False)
@@ -348,44 +326,84 @@ def parse_metabolic_report(uploaded_file):
         clean_df['FAT'] = to_float(c_fat)
         
         available_metrics = []
-        
         if c_watt:
             vals = to_float(c_watt)
             if vals is not None and vals.max() > 10:
                 clean_df['Watt'] = vals
                 available_metrics.append('Watt')
-                
         if c_hr:
             vals = to_float(c_hr)
             if vals is not None and vals.max() > 40:
                 clean_df['HR'] = vals
                 available_metrics.append('HR')
-                
         if c_spd:
             vals = to_float(c_spd)
             if vals is not None and vals.max() > 2:
                 clean_df['Speed'] = vals
                 available_metrics.append('Speed')
 
-        # Check Finale
         clean_df.dropna(subset=['CHO', 'FAT'], inplace=True)
-        if clean_df.empty: return None, [], "Dati vuoti dopo la pulizia."
-        
-        if not available_metrics:
-            return None, [], "Nessuna metrica di intensità (Watt/FC/Speed) valida trovata."
+        if clean_df.empty or not available_metrics: return None, [], "Dati insufficienti."
 
-        # Normalizzazione Unità
+        # Normalizzazione g/min -> g/h
         if clean_df['CHO'].mean() < 10.0:
             clean_df['CHO'] *= 60
             clean_df['FAT'] *= 60
-            
-        # Ordinamento
-        clean_df = clean_df.sort_values(by=available_metrics[0]).reset_index(drop=True)
 
-        return clean_df, available_metrics, None
+        # --- FASE 4: SMOOTHING & CLEANING (LA SFIDA!) ---
+        # Applichiamo una logica di smoothing su tutte le colonne disponibili
+        processed_df = apply_smoothing(clean_df, available_metrics)
+
+        # Ritorna il dataframe pulito
+        return processed_df, available_metrics, None
 
     except Exception as e:
         return None, [], f"Errore critico: {str(e)}"
+
+def apply_smoothing(df, metrics):
+    """
+    Applica un filtro per pulire il rumore dei sensori.
+    Strategia: Media Mobile Pesata + Ordinamento.
+    """
+    df = df.copy()
+    
+    # 1. Rimuovi outlier estremi (valori negativi o impossibili)
+    df = df[(df['CHO'] >= 0) & (df['FAT'] >= 0)]
+    
+    # 2. Ordinamento Primario (Fondamentale per test incrementali)
+    # Se c'è la velocità (Speed) o Watt, usiamo quella come riferimento "reale" del test
+    sort_col = 'Speed' if 'Speed' in df.columns else ('Watt' if 'Watt' in df.columns else 'HR')
+    df = df.sort_values(by=sort_col).reset_index(drop=True)
+    
+    # 3. Smoothing (Rolling Mean)
+    # Una finestra di 30 secondi (o ~10 campioni se breath-by-breath) è standard
+    # Se il file ha pochi punti (es. step test), riduciamo la finestra
+    window_size = 5 if len(df) < 50 else 15
+    
+    cols_to_smooth = ['CHO', 'FAT'] + metrics
+    for col in cols_to_smooth:
+        # Applica media mobile centrata per non shiftare i dati
+        df[col] = df[col].rolling(window=window_size, min_periods=1, center=True).mean()
+
+    # 4. Binning (Opzionale ma pulisce molto)
+    # Se abbiamo la velocità, raggruppiamo i valori arrotondando a 0.5 km/h
+    if 'Speed' in df.columns:
+        df['Speed_Bin'] = (df['Speed'] * 2).round() / 2  # Round to nearest 0.5
+        df = df.groupby('Speed_Bin', as_index=False).mean()
+        # Rimuoviamo la colonna bin per lasciare Speed pulita
+        df = df.drop(columns=['Speed_Bin'])
+        
+    elif 'Watt' in df.columns:
+        # Round to nearest 10W
+        df['Watt_Bin'] = (df['Watt'] / 10).round() * 10
+        df = df.groupby('Watt_Bin', as_index=False).mean()
+        df = df.drop(columns=['Watt_Bin'])
+
+    # 5. Check Monotonicità (Solo per l'asse X scelto dall'ordinamento)
+    # Assicuriamoci che l'asse X sia strettamente crescente
+    df = df.sort_values(by=sort_col).drop_duplicates(subset=[sort_col])
+    
+    return df
 
 def find_header_row_index(df_temp):
     for i, row in df_temp.head(600).iterrows():
@@ -428,6 +446,7 @@ def calculate_zones_cycling(ftp):
     return [{"Zona": f"Z{i+1}", "Valore": f"{int(ftp*p)} W"} for i, p in enumerate([0.55, 0.75, 0.90, 1.05, 1.20])]
 def calculate_zones_running_hr(thr):
     return [{"Zona": f"Z{i+1}", "Valore": f"{int(thr*p)} bpm"} for i, p in enumerate([0.85, 0.89, 0.94, 0.99, 1.02])]
+
 
 
 
