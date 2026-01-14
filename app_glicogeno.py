@@ -410,7 +410,7 @@ with tab3:
     subj = st.session_state['subject_struct']
     
     # --- OVERRIDE MODE ---
-    st.markdown("### 🛠️ Modalità Test / Override")
+    st.markdown("### Modalità Test / Override")
     enable_override = st.checkbox("Abilita Override Livello Iniziale", value=False)
     
     if enable_override:
@@ -905,6 +905,7 @@ with tab3:
                  1. **Riduci l'intensità**: Abbassa i Watt/FC medi o il target FTP.
                  2. **Aumenta il Tapering**: Cerca di partire con il serbatoio più pieno (Tab 2).
                  """)
+
 
 
 
