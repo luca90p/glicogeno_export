@@ -101,12 +101,6 @@ with st.sidebar:
     
     st.markdown("---")
 
-    # VLaMax fittizia per compatibilità modelli interni (anche se non usata per calcoli)
-    user_vlamax = 0.5 
-    
-    st.metric("VO2max Impostato", f"{user_vo2:.1f}")
-    st.markdown("---")
-
 # --- DEFINIZIONE TABS ---
 tab1, tab2, tab3 = st.tabs(["Dati & Upload", "Simulazione Gara", "Analisi Avanzata"])
 
@@ -946,6 +940,7 @@ with tab3:
         
     else:
         st.info("Per attivare il Cockpit, esegui prima la simulazione con dati di potenza.")
+
 
 
 
