@@ -231,20 +231,17 @@ def parse_fit_file_wrapper(uploaded_file, sport_type):
     
     return simulation_series, total_duration_min, avg_power, avg_hr, norm_power, dist, elev_gain, work_kj, df, graphs_data
 # ==============================================================================
-# PARSER METABOLICO UNIVERSALE (CERCA GLI HEADER)
+# PARSER METABOLICO "FULL STACK"
+# 1. Parsing -> 2. Smoothing -> 3. Resampling Unitario
 # ==============================================================================
 def parse_metabolic_report(uploaded_file):
-    """
-    Legge file CSV/Excel, estrae CHO/FAT/Intensità e APPLICA SMOOTHING
-    per correggere il rumore dei sensori e garantire curve crescenti.
-    """
     filename = uploaded_file.name.lower()
     df = None
     
     try:
         uploaded_file.seek(0)
         
-        # 1. STRATEGIA EXCEL
+        # --- 1. LETTURA FILE ---
         if filename.endswith(('.xls', '.xlsx')):
             try:
                 df_temp = pd.read_excel(uploaded_file, header=None)
@@ -255,27 +252,26 @@ def parse_metabolic_report(uploaded_file):
             except Exception as e:
                 return None, [], f"Errore Excel: {e}"
 
-        # 2. STRATEGIA CSV / TXT
-        else:
-            encodings_to_try = ['latin-1', 'utf-8', 'cp1252']
+        else: # CSV/TXT
+            encodings = ['latin-1', 'utf-8', 'cp1252']
             content = None
-            used_encoding = None
-            for enc in encodings_to_try:
+            used_enc = None
+            for enc in encodings:
                 try:
                     uploaded_file.seek(0)
                     content = uploaded_file.read().decode(enc)
-                    used_encoding = enc
+                    used_enc = enc
                     break
-                except UnicodeDecodeError: continue
+                except: continue
             
-            if content is None: return None, [], "Encoding non riconosciuto."
+            if content is None: return None, [], "Encoding fallito."
 
             all_lines = content.splitlines()
             header_idx = -1
             sep = ',' 
             for i, line in enumerate(all_lines[:600]): 
-                line_upper = line.upper()
-                if ('CHO' in line_upper or 'CARB' in line_upper) and ('FAT' in line_upper or 'LIPID' in line_upper):
+                line_up = line.upper()
+                if ('CHO' in line_up or 'CARB' in line_up) and ('FAT' in line_up or 'LIPID' in line_up):
                     header_idx = i
                     if line.count(';') > line.count(','): sep = ';'
                     elif line.count('\t') > line.count(','): sep = '\t'
@@ -284,134 +280,160 @@ def parse_metabolic_report(uploaded_file):
             if header_idx != -1:
                 uploaded_file.seek(0)
                 try:
-                    df = pd.read_csv(uploaded_file, sep=sep, skiprows=header_idx, encoding=used_encoding, engine='python')
+                    df = pd.read_csv(uploaded_file, sep=sep, skiprows=header_idx, encoding=used_enc, engine='python')
                 except:
                     uploaded_file.seek(0)
-                    df = pd.read_csv(uploaded_file, sep=sep, header=None, encoding=used_encoding, engine='python')
+                    df = pd.read_csv(uploaded_file, sep=sep, header=None, encoding=used_enc, engine='python')
                     df = df.iloc[header_idx+1:].reset_index(drop=True)
                     df.columns = all_lines[header_idx].split(sep)
             else:
-                return None, [], "Intestazione non trovata."
+                return None, [], "Header non trovato."
 
-        # 3. PULIZIA
+        # --- 2. PULIZIA BASE ---
         if df is None or df.empty: return None, [], "File vuoto."
         df.columns = [str(c).strip().upper() for c in df.columns]
-        clean_df = pd.DataFrame()
         
-        # Helper ricerca colonne (con blocchi)
-        def get_col(candidates, block_chars=None):
-            if block_chars is None: block_chars = []
+        def get_col(candidates, block=None):
+            if block is None: block = []
             for col in df.columns:
-                if any(bc in col for bc in block_chars): continue
+                if any(b in col for b in block): continue
                 for cand in candidates:
-                    if cand == col or f" {cand}" in col or f"{cand} " in col or f"({cand})" in col or f"[{cand}]" in col:
+                    if cand == col or f" {cand}" in col or f"{cand} " in col or f"({cand})" in col:
                         return col
             return None
 
-        # Estrazione Substrati
         c_cho = get_col(['CHO', 'CARBOHYDRATES', 'QCHO'])
         c_fat = get_col(['FAT', 'LIPIDS', 'QFAT'])
         
-        # Estrazione Intensità
-        c_hr = get_col(['FC', 'HR', 'BPM', 'HEART'], block_chars=['/', '%'])
-        c_watt = get_col(['WR', 'WATT', 'POWER', 'POW', 'LOAD'], block_chars=['/'])
-        c_spd = get_col(['V', 'SPEED', 'VELOCITY', 'KM/H'], block_chars=['/', 'VO2'])
+        c_hr = get_col(['FC', 'HR', 'BPM', 'HEART'], block=['/', '%'])
+        c_watt = get_col(['WR', 'WATT', 'POWER', 'POW', 'LOAD'], block=['/'])
+        c_spd = get_col(['V', 'SPEED', 'VELOCITY', 'KM/H'], block=['/', 'VO2'])
 
-        def to_float(col_name):
-            if not col_name: return None
-            s = df[col_name].astype(str).str.replace(',', '.', regex=False)
+        def to_float(col):
+            if not col: return None
+            s = df[col].astype(str).str.replace(',', '.', regex=False)
             return pd.to_numeric(s, errors='coerce')
 
+        clean_df = pd.DataFrame()
         clean_df['CHO'] = to_float(c_cho)
         clean_df['FAT'] = to_float(c_fat)
         
-        available_metrics = []
+        metrics = []
         if c_watt:
-            vals = to_float(c_watt)
-            if vals is not None and vals.max() > 10:
-                clean_df['Watt'] = vals
-                available_metrics.append('Watt')
+            w = to_float(c_watt)
+            if w is not None and w.max() > 10: 
+                clean_df['Watt'] = w
+                metrics.append('Watt')
         if c_hr:
-            vals = to_float(c_hr)
-            if vals is not None and vals.max() > 40:
-                clean_df['HR'] = vals
-                available_metrics.append('HR')
+            h = to_float(c_hr)
+            if h is not None and h.max() > 40: 
+                clean_df['HR'] = h
+                metrics.append('HR')
         if c_spd:
-            vals = to_float(c_spd)
-            if vals is not None and vals.max() > 2:
-                clean_df['Speed'] = vals
-                available_metrics.append('Speed')
+            s = to_float(c_spd)
+            if s is not None and s.max() > 2: 
+                clean_df['Speed'] = s
+                metrics.append('Speed')
 
         clean_df.dropna(subset=['CHO', 'FAT'], inplace=True)
-        if clean_df.empty or not available_metrics: return None, [], "Dati insufficienti."
+        if clean_df.empty or not metrics: return None, [], "Dati insufficienti."
 
-        # Normalizzazione g/min -> g/h
+        # g/min -> g/h
         if clean_df['CHO'].mean() < 10.0:
             clean_df['CHO'] *= 60
             clean_df['FAT'] *= 60
 
-        # --- FASE 4: SMOOTHING & CLEANING (LA SFIDA!) ---
-        # Applichiamo una logica di smoothing su tutte le colonne disponibili
-        processed_df = apply_smoothing(clean_df, available_metrics)
+        # --- 3. SMOOTHING (Pulizia Rumore) ---
+        smoothed_df = apply_smoothing(clean_df, metrics)
 
-        # Ritorna il dataframe pulito
-        return processed_df, available_metrics, None
+        # --- 4. RESAMPLING UNITARIO (La tua richiesta) ---
+        # Interpoliamo per avere 1 riga per ogni Watt/Bpm
+        primary_metric = metrics[0] # Usa la prima disponibile (es. Watt o HR)
+        final_df = resample_to_unit_intervals(smoothed_df, primary_metric)
+
+        # Ricalcoliamo le metriche disponibili nel df finale
+        final_metrics = [c for c in metrics if c in final_df.columns]
+
+        return final_df, final_metrics, None
 
     except Exception as e:
-        return None, [], f"Errore critico: {str(e)}"
+        return None, [], f"Errore Parsing: {str(e)}"
 
-def apply_smoothing(df, metrics):
+# ==============================================================================
+# LOGICA DI RESAMPLING (Cruciale per "Niente Salti")
+# ==============================================================================
+def resample_to_unit_intervals(df, x_col):
     """
-    Applica un filtro per pulire il rumore dei sensori.
-    Strategia: Media Mobile Pesata + Ordinamento.
+    Crea una Lookup Table densa interpolando i dati.
+    - Watt/HR: Step 1 (es. 100, 101, 102...)
+    - Speed: Step 0.1 (es. 10.0, 10.1, 10.2...)
     """
-    df = df.copy()
+    if x_col not in df.columns: return df
     
-    # 1. Rimuovi outlier estremi (valori negativi o impossibili)
+    # 1. Definisci il range
+    min_x = math.ceil(df[x_col].min())
+    max_x = math.floor(df[x_col].max())
+    
+    # Se il range è troppo piccolo o nullo, ritorna l'originale
+    if max_x <= min_x: return df
+
+    # 2. Definisci lo step
+    step = 0.1 if x_col == 'Speed' else 1.0
+    
+    # Crea il nuovo asse X denso
+    # np.arange include min, esclude max -> aggiungiamo step per includere max
+    new_x = np.arange(min_x, max_x + step, step)
+    
+    # 3. Interpola tutte le colonne numeriche su questo nuovo asse
+    new_data = {x_col: new_x}
+    
+    # Colonne da interpolare (CHO, FAT e le altre metriche presenti)
+    cols_to_interp = [c for c in df.columns if c != x_col and pd.api.types.is_numeric_dtype(df[c])]
+    
+    for col in cols_to_interp:
+        # np.interp(x_nuovi, x_vecchi, y_vecchi)
+        new_data[col] = np.interp(new_x, df[x_col], df[col])
+        
+    return pd.DataFrame(new_data)
+
+# ==============================================================================
+# LOGICA SMOOTHING (Pulizia Rumore e Binning)
+# ==============================================================================
+def apply_smoothing(df, metrics):
+    df = df.copy()
     df = df[(df['CHO'] >= 0) & (df['FAT'] >= 0)]
     
-    # 2. Ordinamento Primario (Fondamentale per test incrementali)
-    # Se c'è la velocità (Speed) o Watt, usiamo quella come riferimento "reale" del test
-    sort_col = 'Speed' if 'Speed' in df.columns else ('Watt' if 'Watt' in df.columns else 'HR')
+    # Ordinamento (fondamentale per interpolazione)
+    sort_col = metrics[0]
     df = df.sort_values(by=sort_col).reset_index(drop=True)
     
-    # 3. Smoothing (Rolling Mean)
-    # Una finestra di 30 secondi (o ~10 campioni se breath-by-breath) è standard
-    # Se il file ha pochi punti (es. step test), riduciamo la finestra
-    window_size = 5 if len(df) < 50 else 15
-    
-    cols_to_smooth = ['CHO', 'FAT'] + metrics
-    for col in cols_to_smooth:
-        # Applica media mobile centrata per non shiftare i dati
-        df[col] = df[col].rolling(window=window_size, min_periods=1, center=True).mean()
+    # Rolling Average (Filtro Passa-Basso)
+    window = 5 if len(df) < 50 else 15
+    cols = ['CHO', 'FAT'] + metrics
+    for c in cols:
+        df[c] = df[c].rolling(window=window, min_periods=1, center=True).mean()
 
-    # 4. Binning (Opzionale ma pulisce molto)
-    # Se abbiamo la velocità, raggruppiamo i valori arrotondando a 0.5 km/h
+    # Binning (Riduce i punti ridondanti prima del resampling)
     if 'Speed' in df.columns:
-        df['Speed_Bin'] = (df['Speed'] * 2).round() / 2  # Round to nearest 0.5
-        df = df.groupby('Speed_Bin', as_index=False).mean()
-        # Rimuoviamo la colonna bin per lasciare Speed pulita
-        df = df.drop(columns=['Speed_Bin'])
-        
+        # Arrotonda ai 0.5 km/h più vicini per fare la media locale
+        df['_bin'] = (df['Speed'] * 2).round() / 2
+        df = df.groupby('_bin', as_index=False).mean().drop(columns=['_bin'])
     elif 'Watt' in df.columns:
-        # Round to nearest 10W
-        df['Watt_Bin'] = (df['Watt'] / 10).round() * 10
-        df = df.groupby('Watt_Bin', as_index=False).mean()
-        df = df.drop(columns=['Watt_Bin'])
+        # Arrotonda ai 5 Watt
+        df['_bin'] = (df['Watt'] / 5).round() * 5
+        df = df.groupby('_bin', as_index=False).mean().drop(columns=['_bin'])
+    else:
+        # Arrotonda a 1 BPM
+        df['_bin'] = df['HR'].round()
+        df = df.groupby('_bin', as_index=False).mean().drop(columns=['_bin'])
 
-    # 5. Check Monotonicità (Solo per l'asse X scelto dall'ordinamento)
-    # Assicuriamoci che l'asse X sia strettamente crescente
-    df = df.sort_values(by=sort_col).drop_duplicates(subset=[sort_col])
-    
     return df
 
 def find_header_row_index(df_temp):
     for i, row in df_temp.head(600).iterrows():
-        row_str = " ".join([str(x).upper() for x in row.values])
-        if ('CHO' in row_str or 'CARB' in row_str) and ('FAT' in row_str or 'LIPID' in row_str):
-            return i
+        s = " ".join([str(x).upper() for x in row.values])
+        if ('CHO' in s or 'CARB' in s) and ('FAT' in s or 'LIPID' in s): return i
     return None
-
 #================================================================================================
 # --- ZWO ---
 #================================================================================================
@@ -446,6 +468,7 @@ def calculate_zones_cycling(ftp):
     return [{"Zona": f"Z{i+1}", "Valore": f"{int(ftp*p)} W"} for i, p in enumerate([0.55, 0.75, 0.90, 1.05, 1.20])]
 def calculate_zones_running_hr(thr):
     return [{"Zona": f"Z{i+1}", "Valore": f"{int(thr*p)} bpm"} for i, p in enumerate([0.85, 0.89, 0.94, 0.99, 1.02])]
+
 
 
 
