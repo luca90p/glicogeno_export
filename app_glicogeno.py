@@ -775,9 +775,6 @@ with tab3:
         
         st.altair_chart(combined_cho.interactive(), use_container_width=True)
 
-        if stats_sim['final_glycogen'] < 20: st.error("⚠️ Rischio Bonking elevato!")
-        else: st.success("✅ Strategia sostenibile")
-
         st.markdown("---")
         st.markdown("#### Confronto Riserve Nette")
         
@@ -1022,6 +1019,7 @@ with tab3:
                  1. **Riduci l'intensità**: Abbassa i Watt/FC medi o il target FTP.
                  2. **Aumenta il Tapering**: Cerca di partire con il serbatoio più pieno (Tab 2).
                  """)
+
 
 
 
