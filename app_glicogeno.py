@@ -700,14 +700,83 @@ with tab3:
         # Uniamo tutto
         st.altair_chart((chart_stack + chart_total + cutoff_line).interactive(), use_container_width=True)
 
+        # INIEZIONE BPM REALI (Se disponibili dal FIT)
+        if fit_df is not None and 'heart_rate' in fit_df.columns:
+             # Resample della HR originale del FIT per matchare i minuti della simulazione
+             hr_resampled = fit_df.resample('1min')['heart_rate'].mean().fillna(0)
+             # Allinea le lunghezze
+             sim_len = len(df_sim)
+             hr_list = hr_resampled.tolist()[:sim_len]
+             # Se la simulazione è più lunga del fit (es. manual override), pad con 0
+             if len(hr_list) < sim_len:
+                 hr_list += [0] * (sim_len - len(hr_list))
+             df_sim['BPM_Activity'] = hr_list
+        else:
+             df_sim['BPM_Activity'] = 0
+
+        # DASHBOARD
         st.markdown("---")
-        st.markdown("#### Ossidazione Lipidica (Tasso Orario)")
-        chart_fat = alt.Chart(df_sim).mark_line(color='#FFC107', strokeWidth=3).encode(
-            x=alt.X('Time (min)'),
-            y=alt.Y('Ossidazione Lipidica (g)', title='Grassi (g/h)'),
-            tooltip=['Time (min)', 'Ossidazione Lipidica (g)']
-        ).properties(height=250)
-        st.altair_chart(chart_fat + cutoff_line, use_container_width=True)
+        st.subheader("Analisi Cinetica")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("IF", f"{stats_sim['intensity_factor']:.2f}")
+        c2.metric("RER", f"{stats_sim['avg_rer']:.2f}")
+        c3.metric("CHO/FAT", f"{int(stats_sim['cho_pct'])}% / {100-int(stats_sim['cho_pct'])}%")
+        c4.metric("Glicogeno Finale", f"{int(stats_sim['final_glycogen'])} g", delta=f"{int(stats_sim['final_glycogen'] - start_total)} g")
+
+        # --- GRAFICO 1: Ossidazione Lipidica + BPM ---
+        st.markdown("### 📉 Ossidazione Lipidica vs Heart Rate")
+        with st.expander("Vedi Dettaglio", expanded=True):
+            base = alt.Chart(df_sim).encode(x=alt.X('Time (min)', title='Tempo (min)'))
+            
+            line_fat = base.mark_line(color='#FFC107', strokeWidth=3).encode(
+                y=alt.Y('Ossidazione Lipidica (g)', title='Grassi (g/h)', axis=alt.Axis(titleColor='#FFC107')),
+                tooltip=['Time (min)', 'Ossidazione Lipidica (g)']
+            )
+            
+            line_hr = base.mark_line(color='red', strokeDash=[2,2], opacity=0.5).encode(
+                y=alt.Y('BPM_Activity', title='Heart Rate (BPM)', axis=alt.Axis(titleColor='red')),
+                tooltip=['Time (min)', 'BPM_Activity']
+            )
+            
+            st.altair_chart(alt.layer(line_fat, line_hr).resolve_scale(y='independent').interactive(), use_container_width=True)
+
+        # --- GRAFICO 2: Bilancio Carboidrati Completo + BPM ---
+        st.markdown("### 📊 Dettaglio Carboidrati & Intensità")
+        
+        df_melt = df_sim.melt('Time (min)', value_vars=['Carboidrati Esogeni (g)', 'Glicogeno Epatico (g)', 'Glicogeno Muscolare (g)'], var_name='Fonte', value_name='g/h')
+        # Ordine Stack: Exo (base) -> Liver -> Muscle (top)
+        order = ['Carboidrati Esogeni (g)', 'Glicogeno Epatico (g)', 'Glicogeno Muscolare (g)']
+        colors = ['#1E88E5', '#BF360C', '#EF5350'] 
+        
+        # Base Chart
+        base_cho = alt.Chart(df_sim).encode(x='Time (min)')
+        
+        # 1. Area Stacked (Le fonti)
+        chart_stack = alt.Chart(df_melt).mark_area(opacity=0.85).encode(
+            x='Time (min)', y='g/h', 
+            color=alt.Color('Fonte', scale=alt.Scale(domain=order, range=colors)),
+            tooltip=['Time (min)', 'Fonte', 'g/h']
+        )
+        
+        # 2. Linea Consumo CHO Totale (Muscolo+Fegato+Exo) - NO GRASSI
+        df_sim['Total_CHO_Burn'] = df_sim['Glicogeno Muscolare (g)'] + df_sim['Glicogeno Epatico (g)'] + df_sim['Carboidrati Esogeni (g)']
+        chart_total_cho = base_cho.mark_line(color='black', strokeWidth=2).encode(
+            y='Total_CHO_Burn', tooltip=[alt.Tooltip('Total_CHO_Burn', title='Totale CHO (g/h)')]
+        )
+        
+        # 3. Linea BPM (Asse Destro)
+        chart_hr_overlay = base_cho.mark_line(color='red', strokeDash=[2,2], opacity=0.5).encode(
+            y=alt.Y('BPM_Activity', axis=alt.Axis(title='BPM', titleColor='red')),
+            tooltip=['BPM_Activity']
+        )
+        
+        # Layering: Stack + Linea Totale su asse SX, HR su asse DX
+        combined_cho = alt.layer(chart_stack + chart_total_cho, chart_hr_overlay).resolve_scale(y='independent')
+        
+        st.altair_chart(combined_cho.interactive(), use_container_width=True)
+
+        if stats_sim['final_glycogen'] < 20: st.error("⚠️ Rischio Bonking elevato!")
+        else: st.success("✅ Strategia sostenibile")
 
         st.markdown("---")
         st.markdown("#### Confronto Riserve Nette")
@@ -953,6 +1022,7 @@ with tab3:
                  1. **Riduci l'intensità**: Abbassa i Watt/FC medi o il target FTP.
                  2. **Aumenta il Tapering**: Cerca di partire con il serbatoio più pieno (Tab 2).
                  """)
+
 
 
 
