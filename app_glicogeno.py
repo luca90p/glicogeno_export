@@ -457,46 +457,84 @@ with tab3:
             file_loaded = True
             fname = uploaded_file.name.lower()
             
-            if fname.endswith('.zwo'):
-                series, dur_calc, w_calc, hr_calc = utils.parse_zwo_file(uploaded_file, target_ftp, target_thresh_hr, subj.sport)
-                if series:
-                    duration = dur_calc
-                    st.success(f"✅ ZWO: {dur_calc} min")
-                    
-                    if subj.sport == SportType.CYCLING:
-                        intensity_series = [val * target_ftp for val in series]
-                        val = w_calc * target_ftp
-                        params = {'mode': 'cycling', 'avg_watts': val, 'np_watts': val, 'ftp_watts': target_ftp, 'efficiency': 22.0}
-                    else:
-                        intensity_series = [val * target_thresh_hr for val in series]
-                        val = hr_calc * target_thresh_hr
-                        params = {'mode': 'running', 'avg_hr': val, 'threshold_hr': target_thresh_hr}
-            
-            elif fname.endswith('.fit'):
+            if fname.endswith('.fit'):
                 fit_series, fit_dur, fit_avg_w, fit_avg_hr, fit_np, fit_dist, fit_elev, fit_work, fit_clean_df, graphs_data = utils.parse_fit_file_wrapper(uploaded_file, subj.sport)
                 
                 if fit_clean_df is not None:
-                    intensity_series = fit_series
                     duration = fit_dur
                     fit_df = fit_clean_df
                     st.success("✅ File FIT elaborato")
                     
-                    k1, k2 = st.columns(2)
-                    k1.metric("Durata", f"{fit_dur} min")
+                    # --- NUOVA LOGICA: ALLINEAMENTO METABOLICO ---
+                    # Recupera le impostazioni dal Tab 1
+                    lab_active = st.session_state.get('use_lab_data', False)
+                    curve_metric_pref = st.session_state.get('curve_metric', None) # es. 'HR', 'Watt', 'Speed'
                     
-                    if subj.sport == SportType.CYCLING:
-                        k2.metric("Avg Power", f"{int(fit_avg_w)} W")
-                        val = int(fit_avg_w)
-                        vi_input = fit_np / fit_avg_w if fit_avg_w > 0 else 1.0
-                        params = {'mode': 'cycling', 'avg_watts': val, 'np_watts': fit_np, 'ftp_watts': target_ftp, 'efficiency': 22.0}
-                    else:
-                        k2.metric("Avg HR", f"{int(fit_avg_hr)} bpm")
-                        val = int(fit_avg_hr)
-                        # Logica running semplificata: se c'è watt usa watt, se no cardio
-                        if fit_avg_w > 0:
-                             params = {'mode': 'running', 'avg_watts': fit_avg_w, 'ftp_watts': target_ftp}
+                    forced_source_col = None
+                    forced_metric_name = None
+                    
+                    # Se l'utente ha una curva metabolica attiva, cerchiamo di usare quella metrica nel FIT
+                    if lab_active and curve_metric_pref:
+                        if curve_metric_pref == 'HR' and 'heart_rate' in fit_clean_df.columns:
+                            forced_source_col = 'heart_rate'
+                            forced_metric_name = 'Heart Rate (BPM)'
+                        elif curve_metric_pref == 'Watt' and 'power' in fit_clean_df.columns:
+                            forced_source_col = 'power'
+                            forced_metric_name = 'Power (Watt)'
+                        elif curve_metric_pref == 'Speed' and 'speed' in fit_clean_df.columns:
+                            forced_source_col = 'speed' # fitparse restituisce m/s di solito, check utils
+                            forced_metric_name = 'Speed'
+                    
+                    # Estrazione Serie Temporale (Resampled 1min)
+                    df_resampled = fit_clean_df.resample('1min').mean()
+                    
+                    if forced_source_col:
+                        # ABBIAMO TROVATO IL MATCH! Usiamo la metrica della curva.
+                        st.info(f"🔄 **Allineamento Attivo:** Simulazione basata su **{forced_metric_name}** come da Profilo Lab.")
+                        
+                        # Gestione specifica Speed (di solito m/s -> km/h per matchare Lab)
+                        if forced_source_col == 'speed':
+                             intensity_series = (df_resampled[forced_source_col] * 3.6).fillna(0).tolist()
+                             val = int(fit_clean_df['speed'].mean() * 3.6)
+                             params = {'mode': 'running', 'avg_watts': val} # Hack: passiamo speed come avg_watts
                         else:
-                             params = {'mode': 'running', 'avg_hr': val, 'threshold_hr': target_thresh_hr}
+                             intensity_series = df_resampled[forced_source_col].fillna(0).tolist()
+                             val = int(df_resampled[forced_source_col].mean())
+                             
+                             if forced_source_col == 'heart_rate':
+                                 params = {'mode': 'running', 'avg_hr': val, 'threshold_hr': target_thresh_hr}
+                             else:
+                                 params = {'mode': 'cycling', 'avg_watts': val, 'np_watts': val, 'ftp_watts': target_ftp, 'efficiency': 22.0}
+                                 
+                    else:
+                        # FALLBACK: Comportamento Standard (Se non c'è lab o non c'è match)
+                        k1, k2 = st.columns(2)
+                        k1.metric("Durata", f"{fit_dur} min")
+                        
+                        if subj.sport == SportType.CYCLING:
+                            k2.metric("Avg Power", f"{int(fit_avg_w)} W")
+                            intensity_series = fit_series # Watt
+                            val = int(fit_avg_w)
+                            vi_input = fit_np / fit_avg_w if fit_avg_w > 0 else 1.0
+                            params = {'mode': 'cycling', 'avg_watts': val, 'np_watts': fit_np, 'ftp_watts': target_ftp, 'efficiency': 22.0}
+                        else:
+                            k2.metric("Avg HR", f"{int(fit_avg_hr)} bpm")
+                            val = int(fit_avg_hr)
+                            if fit_avg_w > 0: # Stryd
+                                intensity_series = df_resampled['power'].fillna(0).tolist()
+                                params = {'mode': 'running', 'avg_watts': fit_avg_w, 'ftp_watts': target_ftp}
+                            else:
+                                intensity_series = df_resampled['heart_rate'].fillna(0).tolist()
+                                params = {'mode': 'running', 'avg_hr': val, 'threshold_hr': target_thresh_hr}
+
+            elif fname.endswith('.zwo'):
+                series, dur_calc, w_calc, hr_calc = utils.parse_zwo_file(uploaded_file, target_ftp, target_thresh_hr, subj.sport)
+                if series:
+                    duration = dur_calc
+                    st.success(f"✅ ZWO: {dur_calc} min")
+                    intensity_series = [val * target_ftp if subj.sport == SportType.CYCLING else val * target_thresh_hr for val in series]
+                    val = w_calc * target_ftp
+                    params = {'mode': 'cycling' if subj.sport == SportType.CYCLING else 'running', 'avg_watts': val, 'threshold_hr': target_thresh_hr}
 
         if not file_loaded:
             duration = st.number_input("Durata (min)", 60, 900, 180, step=10)
@@ -915,6 +953,7 @@ with tab3:
                  1. **Riduci l'intensità**: Abbassa i Watt/FC medi o il target FTP.
                  2. **Aumenta il Tapering**: Cerca di partire con il serbatoio più pieno (Tab 2).
                  """)
+
 
 
 
