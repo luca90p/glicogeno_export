@@ -144,7 +144,7 @@ with tab1:
 
         # --- SEZIONE: PROFILO METABOLICO (LAB) ---
         st.markdown("---")
-        with st.expander("Profilo Metabolico (Test Laboratorio)", expanded=False):
+        with st.expander("🧬 Profilo Metabolico (Test Laboratorio)", expanded=False):
             st.info("Inserisci i dati dal test del gas (Metabolimetro) per personalizzare i consumi.")
             active_lab = st.checkbox("Attiva Profilo Metabolico Personalizzato", value=st.session_state.get('use_lab_data', False))
             
@@ -157,15 +157,23 @@ with tab1:
                     
                     if df_raw is not None:
                         st.success("✅ File decodificato con successo!")
-                        sel_metric = avail_metrics[0]
                         
-                        if len(avail_metrics) > 1:
-                            st.markdown("##### 📐 Seleziona il Riferimento (Asse X)")
-                            def_idx = avail_metrics.index('Watt') if 'Watt' in avail_metrics else 0
-                            sel_metric = st.radio("Scegli su cosa basare le curve:", avail_metrics, index=def_idx, horizontal=True)
+                        # --- NUOVA LOGICA: SELEZIONE ESPLICITA METRICA ---
+                        st.markdown("##### 📐 Seleziona il Riferimento (Asse X)")
+                        st.caption("Quale parametro guida il consumo nella tua prova?")
+                        
+                        # Seleziona la metrica principale (es. HR, Watt, Speed)
+                        sel_metric = st.radio(
+                            "Metrica Disponibile:", 
+                            avail_metrics, 
+                            index=0, 
+                            horizontal=True,
+                            help="Se scegli HR, la simulazione userà la frequenza cardiaca del file FIT. Se scegli Watt, userà la potenza."
+                        )
                         
                         # Preparazione DataFrame Curve
                         df_curve = df_raw.copy()
+                        # Rinomina la colonna scelta in 'Intensity' per standardizzare
                         df_curve['Intensity'] = df_curve[sel_metric]
                         df_curve = df_curve[df_curve['Intensity'] > 0].sort_values('Intensity').reset_index(drop=True)
                         
@@ -181,12 +189,14 @@ with tab1:
                         # Salvataggio in Session State
                         st.session_state['use_lab_data'] = True
                         st.session_state['metabolic_curve'] = df_curve
+                        st.session_state['curve_metric'] = sel_metric # <--- SALVIAMO LA SCELTA UTENTE
                         st.info(f"Curve salvate basate su: **{sel_metric}**")
                     else:
                         st.error(f"Errore nel parsing del file: {err}")
             else:
                 st.session_state['use_lab_data'] = False
                 st.session_state['metabolic_curve'] = None
+                st.session_state['curve_metric'] = None
 
         # --- CREAZIONE OGGETTO SUBJECT ---
         calculated_conc = logic.get_concentration_from_vo2max(user_vo2)
@@ -905,6 +915,7 @@ with tab3:
                  1. **Riduci l'intensità**: Abbassa i Watt/FC medi o il target FTP.
                  2. **Aumenta il Tapering**: Cerca di partire con il serbatoio più pieno (Tab 2).
                  """)
+
 
 
 
