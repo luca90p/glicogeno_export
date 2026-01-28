@@ -66,10 +66,5 @@ Opzionale ma consigliato:
 │   └── zwo.py
 └── plots/
     └── fit_altair.py
-```
-- Riduzione della “mescolanza” tra parsing/plotting/strategia metabolica.
-- Maggiore capacità di estensione futura.
 
----
 
-Se vuoi, posso implementare questi spostamenti in modo progressivo, **senza eliminare nulla**, e mantenendo la compatibilità con l’attuale API interna.
