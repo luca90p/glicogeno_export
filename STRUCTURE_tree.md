@@ -1,24 +1,3 @@
-# Proposta di ristrutturazione (senza rimuovere codice)
-
-Questa proposta descrive come migliorare l'organizzazione del progetto **senza eliminare o tagliare alcuna parte di codice esistente**. L’obiettivo è solo **spostare** o **incapsulare** le funzionalità in moduli più chiari, mantenendo l’attuale comportamento.
-
-## Obiettivi
-
-- Mantenere invariato il comportamento dell’app.
-- Separare UI, dominio e parsing per rendere il codice più manutenibile.
-- Preparare una struttura in cui i moduli siano riusabili e testabili.
-- Ridurre la duplicazione (es. FIT parsing) senza cancellare alcun file.
-
-## Stato attuale (sintesi)
-
-- `app_glicogeno.py`: UI + orchestrazione + logiche di flusso, molto esteso.
-- `logic.py`: motore di simulazione e calcoli principali.
-- `data_models.py`: enum e dataclass di dominio.
-- `utils.py`: parsing FIT/ZWO/Metabolic + plotting + funzioni di supporto.
-- `fit_processor.py`: parser FIT alternativo e grafici Matplotlib (duplicazione potenziale).
-
-## Proposta (a passi, senza tagli)
-
 ### 1) Introduzione cartelle “ui/” e “domain/”
 
 **Spostamento (senza rimozione di codice):**
@@ -88,18 +67,6 @@ Opzionale ma consigliato:
 └── plots/
     └── fit_altair.py
 ```
-
-## Strategia di migrazione sicura
-
-1. **Fase 1:** Creare i nuovi moduli e copiarvi le funzioni, mantenendo le vecchie importazioni.
-2. **Fase 2:** In `utils.py`/`logic.py`, trasformare le funzioni in wrapper che chiamano i nuovi moduli.
-3. **Fase 3:** Aggiornare `app_glicogeno.py` a usare i moduli nuovi.
-4. **Fase 4:** Aggiungere test di regressione (se disponibili).
-
-## Vantaggi
-
-- UI più leggibile e modulare.
-- Logica facilmente testabile.
 - Riduzione della “mescolanza” tra parsing/plotting/strategia metabolica.
 - Maggiore capacità di estensione futura.
 
