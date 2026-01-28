@@ -38,10 +38,6 @@ def create_fit_plot(df):
     """Genera grafico ALTAIR a 4 pannelli: Power, HR, Cadence, Altitude."""
     return _create_fit_plot(df)
 
-import pandas as pd
-import numpy as np
-import math
-
 # Assicurati di importare l'enum SportType se lo usi, o usa stringhe
 # from constants import SportType 
 
@@ -91,6 +87,7 @@ def calculate_zones_cycling(ftp):
     return [{"Zona": f"Z{i+1}", "Valore": f"{int(ftp*p)} W"} for i, p in enumerate([0.55, 0.75, 0.90, 1.05, 1.20])]
 def calculate_zones_running_hr(thr):
     return [{"Zona": f"Z{i+1}", "Valore": f"{int(thr*p)} bpm"} for i, p in enumerate([0.85, 0.89, 0.94, 0.99, 1.02])]
+
 
 
 
